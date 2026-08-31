@@ -1,52 +1,37 @@
 /**
- * DoH (DNS-over-HTTPS) resolver wrapper.
- *
- * Replaces the `[[unsafe.bindings]] type = "resolve4"` runtime binding
- * (which required an account-level Cloudflare dashboard opt-in — see
- * [[project_browser_mcp_10021_unsafe_bindings_toggle]]) with a vanilla
- * `fetch` to Cloudflare's public DoH endpoint. The function shape is
- * identical to the binding's `env.RESOLVE4.resolve4(hostname)` so the
- * call site in `src/index.ts` swaps with a one-line change.
+ * DNS-over-HTTPS resolver, used by `is-private-url.ts`.
  *
  * Endpoint: https://cloudflare-dns.com/dns-query
- *   GET ?name=<hostname>&type=A    (DNS type 1)
- *   GET ?name=<hostname>&type=AAAA (DNS type 28) — parallel (#2784)
+ *   GET ?name=<hostname>&type=A     (DNS type 1)
+ *   GET ?name=<hostname>&type=AAAA  (DNS type 28) — issued in parallel
  *   Accept: application/dns-json
- *   → 200 application/dns-json body with { Status, Answer: [{ type, data }] }
+ *   → 200 application/dns-json with { Status, Answer: [{ type, data }] }
  *
- * Why Cloudflare's own DoH?  1.1.1.1 is a CF service; the endpoint
- * serves out of the CF edge; no new third-party dependency.  Cost is
- * +20–50 ms per resolution (1 round trip to the edge; A+AAAA run in
- * parallel so wall time stays ~one RTT).  TOCTOU window is unchanged
- * from the unsafe binding — both approaches only narrow the DNS-rebind
- * gap between the guard-time lookup and the browser's fetch-time lookup;
- * neither fully closes it.  See is-private-url.ts "Known limitation".
+ * Why Cloudflare's own DoH: it is served from the same edge this worker runs
+ * on, so no new third-party dependency. Cost is roughly one extra round trip
+ * (A and AAAA run in parallel, so wall time stays ~1 RTT).
  *
- * Fail-closed contract (matches the unsafe binding's contract):
- *   - non-2xx HTTP response     → throws (isPrivateUrl catches + rejects)
- *   - network error             → throws (isPrivateUrl catches + rejects)
- *   - malformed JSON            → throws (isPrivateUrl catches + rejects)
- *   - missing/empty Answer      → returns [] when BOTH queries empty
- *                                 (isPrivateUrl rejects)
+ * Fail-closed contract:
+ *   - non-2xx response  → throws (isPrivateUrl catches and rejects)
+ *   - network error     → throws
+ *   - malformed JSON    → throws
+ *   - empty Answer      → returns [] when BOTH queries are empty, which
+ *                         isPrivateUrl also treats as a rejection
  *
- * #2784: A-only resolution missed the dual-stack rebind case (public A +
- * private AAAA). We now collect A (type 1) and AAAA (type 28) addresses;
- * isPrivateUrl's PRIVATE_IP_PATTERNS already includes IPv6 patterns.
+ * Both A and AAAA are collected. Resolving only A missed the dual-stack
+ * rebind case — a public A record beside a private AAAA — and
+ * PRIVATE_IP_PATTERNS already covers the IPv6 forms.
  *
- * The function is intentionally decoupled from the worker's `Env`
- * (it takes a `fetchFn` directly) so it can be unit-tested without a
- * Workers runtime and reused by any future caller.
+ * It takes a `fetchFn` rather than the worker `Env` so it can be unit-tested
+ * without a Workers runtime.
  */
 
 const DOH_ENDPOINT = "https://cloudflare-dns.com/dns-query";
 
 /**
- * Per-resolution timeout. The CF navigate tool has an 8s `PAGE_TIMEOUT_MS`
- * and the worker has a 10s wall-time budget; a hung DoH resolver would
- * otherwise eat the navigation budget. 2s is well above the typical
- * 1.1.1.1 round-trip (20–50 ms) and well below the navigate timeout.
- * `AbortSignal.timeout(ms)` is supported in workerd (Workers runtime).
- * Applied independently to each of the A and AAAA fetches.
+ * Per-resolution timeout. A hung resolver would otherwise eat the navigation
+ * budget. 2s is well above a typical round trip (20–50 ms) and well below the
+ * 30s navigation timeout. Applied independently to the A and AAAA fetches.
  */
 const DOH_TIMEOUT_MS = 2_000;
 
@@ -128,15 +113,13 @@ async function queryDoH(
 /**
  * Build a `resolve4(hostname)` function backed by Cloudflare DoH.
  *
- * Despite the name (historical, from the IPv4-only Workers binding),
- * this now returns **both** A and AAAA addresses so dual-stack rebind
- * attacks are visible to `isPrivateUrl` (#2784).
+ * Despite the name, this returns **both** A and AAAA addresses, so dual-stack
+ * rebind attacks are visible to `isPrivateUrl`.
  *
- * @param fetchFn - injectable `fetch` (default: global `fetch`). Tests
- *   pass a `vi.fn()`; production uses the Workers global.
- * @param endpoint - injectable DoH endpoint URL (default: Cloudflare).
- *   Reserved for future override (e.g. an internal DoH proxy); not
- *   wired through wrangler config yet.
+ * @param fetchFn - injectable `fetch` (default: the global). Tests pass a
+ *   `vi.fn()`; production uses the Workers global.
+ * @param endpoint - injectable DoH endpoint (default: Cloudflare). Reserved
+ *   for an override such as an internal resolver; not wired to config yet.
  */
 export function makeResolve4(
   fetchFn: typeof fetch = fetch,

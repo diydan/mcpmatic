@@ -1,52 +1,29 @@
 /**
- * SSRF guard for the browser-mcp worker's `navigate` tool.
+ * SSRF guard for every navigation this worker can cause.
  *
- * Threat model (06-05 review finding H4): an attacker coerces the
- * Playwright browser to navigate to an internal IP via a classic
- * DNS-rebind attack. The attacker controls the authoritative nameserver
- * for `evil.example.com`; it returns a public IP for the first TTL
+ * Threat model: an attacker coerces the remote browser to reach an internal
+ * address via a classic DNS-rebind. The attacker controls the authoritative
+ * nameserver for `evil.example.com`; it returns a public IP for the first TTL
  * window (so a hostname-string check passes), then a private IP (e.g.
- * 127.0.0.1) for the second window (so the browser pivots to the
- * internal network).
+ * 127.0.0.1) for the second window (so the browser pivots inward).
  *
- * The original guard at apps/workers/browser-mcp/src/index.ts:96-105
- * inspected only the hostname *string*. The replacement resolves the
- * hostname to its actual IP(s) via a `resolve4(hostname)` function —
- * originally the Cloudflare Workers `[[unsafe.bindings]] type =
- * "resolve4"` runtime binding (see coordination/cf-bindings-runbook.md
- * Section 3.2), now a Cloudflare DoH wrapper at `./doh-resolve4.ts`
- * (the unsafe binding required an account-level dashboard opt-in that
- * the operator could not find; see
- * [[project_browser_mcp_10021_unsafe_bindings_toggle]]). The TOCTOU
- * window is unchanged across both mechanisms — see "Known limitation"
- * below.
+ * A guard that inspects only the hostname *string* does not catch that. This
+ * one resolves the hostname to its actual addresses through a `resolve4`
+ * function (`./doh-resolve4.ts`) and rejects if any of them is private.
  *
- * The function is fail-closed: if the resolve4 call throws or returns
- * an empty array, the URL is rejected. The rationale: if we cannot
- * prove the URL is safe, we must assume it is not. This mirrors the
- * H1 Twilio fail-closed pattern (apps/backend/src/app/api/webhooks/
- * twilio/sms/route.ts:51-56) and the H3 meet-bot URL-validation
- * pattern (apps/meeting-bots/meet-bot-container/src/url-allowlist.ts:
- * 400-441).
+ * The function is fail-closed: if the resolve call throws or returns an empty
+ * array, the URL is rejected. If we cannot prove a URL is safe, we assume it
+ * is not.
  *
- * The function is intentionally decoupled from the worker's full `Env`
- * interface — it takes only the `resolve4` function it needs. This
- * makes the unit test trivial (a plain `vi.fn()` for the binding) and
- * keeps the function reusable by any future browser-mcp caller.
+ * It takes only the `resolve4` function it needs rather than the worker `Env`,
+ * so the unit test is a plain `vi.fn()`.
  *
- * Known limitation: the canonical DNS-rebind attack relies on a
- * TTL-bounded flip between the guard-time lookup and the fetch-time
- * lookup. A unit test cannot model the time dimension; the rebind
- * scenario in the test exercises the "attacker has pre-warmed the DNS
- * to a private IP by guard-time" case (the realistic scenario for a
- * motivated attacker). True TOCTOU close happens at the browser/SNI
- * layer, not the Worker.
- *
- * PRIVATE_IP_PATTERNS is the same regex list that lived in src/index.ts
- * before the H4 refactor. The H3 sub-plan copy-pasted the same list
- * with attribution (apps/meeting-bots/meet-bot-container/src/
- * url-allowlist.ts:354-364) for the same reason: extracting to a shared
- * module is a follow-up cleanup, not a security-fix blast radius.
+ * Known limitation: the canonical rebind attack turns on a TTL-bounded flip
+ * between the guard-time lookup and the browser's fetch-time lookup. A unit
+ * test cannot model the time dimension; the rebind case in the test exercises
+ * "the attacker has already pointed DNS at a private address by guard time",
+ * which is the realistic scenario. Truly closing the TOCTOU window would have
+ * to happen at the browser/SNI layer, not here.
  */
 
 export const PRIVATE_IP_PATTERNS: readonly RegExp[] = [
@@ -66,11 +43,7 @@ export const BLOCKED_HOSTS: readonly string[] = [
   "metadata.goog",
 ];
 
-/**
- * Re-export the resolve4 type alias from the implementation module so
- * callers that historically imported `Resolve4` from `./is-private-url`
- * keep working. The canonical declaration is in `./doh-resolve4.ts`.
- */
+/** Convenience re-export; the canonical declaration is in `./doh-resolve4.ts`. */
 import type { Resolve4 } from "./doh-resolve4";
 export type { Resolve4 };
 
