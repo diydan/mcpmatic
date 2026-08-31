@@ -58,22 +58,38 @@ Abort the registration signal and the in-page agent has no tools
 
 ```bash
 pnpm install
-cp .dev.vars.example .dev.vars   # OPENAI_API_KEY for the in-page agent
 pnpm test
 pnpm dev
+pnpm run deploy   # `pnpm deploy` is pnpm’s own workspace command, not this script
 ```
 
-ChatGPT desktop: GPT-5.6 Sol or Terra (Luna has WebMCP disabled). Same
-`/s/<token>` URL. ChatGPT can call registered tools without the OpenAI key;
-the in-page agent cannot.
+There is no API key to set. The in-page agent reaches an OpenAI model through
+the Cloudflare `ai` binding and AI Gateway Unified Billing — Cloudflare holds
+the provider credentials, so no key is stored in this Worker or typed on a
+command line. It needs prepaid AI Gateway credits on the account.
+
+If you would rather call OpenAI directly, drop the `ai` binding from
+`wrangler.jsonc` and set the key instead; `runTurn` takes that path when there
+is no binding. Either way the key never reaches the page.
 
 ```bash
-pnpm deploy
-npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put OPENAI_API_KEY   # fallback path only
 ```
 
+`OPENAI_MODEL` picks the model (`openai/gpt-5.5` by default; a bare
+`gpt-5.5` also works). See `.dev.vars.example` for the optional settings.
+
+ChatGPT desktop: GPT-5.6 Sol or Terra (Luna has WebMCP disabled). Same
+`/s/<token>` URL. ChatGPT calls the registered tools with no model
+configured at all — the spine does not depend on this.
+
 Browser Rendering must be enabled on the account. Sessions launch with
-`recording: false`.
+`recording: false`. One browser per session, started on your first grant and
+released when you leave.
+
+Passkeys cannot work here: the authenticator lives on your device, and the
+login happens in a browser running in Cloudflare's network. Demo on a
+password or OAuth login.
 
 Façade headers (`public/_headers`):
 

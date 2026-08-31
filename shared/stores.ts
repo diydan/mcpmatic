@@ -74,7 +74,6 @@ function shopifyTools(store: Store): ToolManifest[] {
         required: ["instruction"],
         additionalProperties: false,
       },
-      fillsFrom: ["shopper.size"],
       steps: [],
     },
     {
@@ -136,7 +135,6 @@ const kayak: ToolManifest = {
     required: ["origin", "destination", "date"],
     additionalProperties: false,
   },
-  fillsFrom: ["traveler.preferredCabin"],
   steps: [
     {
       action: "goto",

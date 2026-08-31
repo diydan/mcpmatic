@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { AuditRow, ServerMessage, ToolSchema } from "../../shared/protocol";
+import type {
+  AuditRow,
+  BrowserState,
+  ServerMessage,
+  ToolSchema,
+} from "../../shared/protocol";
 
 import { ChatPanel } from "../components/ChatPanel";
 import { Viewport } from "../components/Viewport";
@@ -8,7 +13,11 @@ import { Consent } from "../components/Consent";
 import { BlessGate } from "../components/BlessGate";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { openBridge } from "../lib/bridge";
-import { registerAll, type BlessRequest } from "../lib/register-all";
+import {
+  createRegistration,
+  type BlessRequest,
+  type Registration,
+} from "../lib/register-all";
 import { profileStore, seedIfEmpty } from "../lib/profile-store";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
@@ -31,19 +40,19 @@ export function Session() {
   const [lines, setLines] = useState<Line[]>([
     {
       kind: "system",
-      text: "Grant an origin. Shopify stores proxy their native WebMCP. Kayak is synthesised. This panel only calls getTools / executeTool.",
+      text: "get_page_state, list_available_origins and navigate_to are always registered. Grant an origin to add its tools. Shopify stores proxy their native WebMCP; Kayak is synthesised. This panel only calls getTools / executeTool.",
     },
   ]);
   const [audit, setAudit] = useState<AuditRow[]>([]);
   const [jpeg, setJpeg] = useState<string | null>(null);
   const [driving, setDriving] = useState(false);
-  const [browser, setBrowser] = useState<"live" | "missing">("missing");
+  const [browser, setBrowser] = useState<BrowserState>("missing");
   const [busy, setBusy] = useState(false);
   const [consented, setConsented] = useState<Set<string>>(new Set());
   const [bless, setBless] = useState<BlessRequest | null>(null);
   const blessWait = useRef<((ok: boolean) => void) | null>(null);
   const bridgeRef = useRef<ReturnType<typeof openBridge> | null>(null);
-  const registration = useRef<AbortController | null>(null);
+  const registrationRef = useRef<Registration | null>(null);
 
   const refreshTools = useCallback(async () => {
     const mc = ensureModelContext();
@@ -55,25 +64,18 @@ export function Session() {
     })));
   }, []);
 
-  const reregister = useCallback(
-    async (granted: ReadonlySet<string>) => {
-      registration.current?.abort();
-      const exec = (name: string, args: Record<string, unknown>) => {
-        const bridge = bridgeRef.current;
-        if (!bridge) return Promise.reject(new Error("no bridge"));
-        return bridge.exec(name, args);
-      };
-      registration.current = await registerAll({
-        manifests: MANIFESTS,
-        consented: granted,
-        executeRemote: exec,
-        resolveFields: (paths) => profileStore.resolve(paths),
-        bless: (req) =>
-          new Promise((resolve) => {
-            blessWait.current = resolve;
-            setBless(req);
-          }),
-      });
+  const syncTools = useCallback(
+    async (registration: Registration, granted: ReadonlySet<string>) => {
+      const report = await registration.sync(granted);
+      for (const failure of report.failed) {
+        setLines((l) => [
+          ...l,
+          {
+            kind: "system",
+            text: `could not register ${failure.name}: ${failure.message}`,
+          },
+        ]);
+      }
       await refreshTools();
     },
     [refreshTools],
@@ -86,6 +88,16 @@ export function Session() {
     mc.addEventListener("toolchange", onChange);
 
     const bridge = openBridge(sessionToken, {
+      onClose: () => {
+        setBusy(false);
+        setLines((l) => [
+          ...l,
+          {
+            kind: "system",
+            text: "bridge closed — the session expired, or another tab took it over. Reload to reconnect.",
+          },
+        ]);
+      },
       onMessage: (msg: ServerMessage) => {
         if (msg.type === "frame") setJpeg(msg.jpeg);
         if (msg.type === "state") {
@@ -107,30 +119,77 @@ export function Session() {
             { kind: "tool", text: `executeTool ${msg.name}` },
           ]);
           void (async () => {
-            const listed = await mc.getTools();
-            const tool = listed.find((t) => t.name === msg.name);
-            if (!tool) {
-              setLines((l) => [
-                ...l,
-                { kind: "system", text: `tool ${msg.name} is not registered` },
-              ]);
-              return;
+            // Whatever happens below, the DO gets exactly one tool_result for
+            // this call id. Otherwise the agent turn strands and the chat box
+            // stays disabled for the rest of the session.
+            let ok = true;
+            let result = "";
+            try {
+              const listed = await mc.getTools();
+              const tool = listed.find((t) => t.name === msg.name);
+              if (!tool) {
+                ok = false;
+                result = `tool ${msg.name} is not registered on this page`;
+                setLines((l) => [...l, { kind: "system", text: result }]);
+              } else {
+                result = await mc.executeTool(tool, msg.arguments);
+              }
+            } catch (err) {
+              ok = false;
+              result = err instanceof Error ? err.message : "executeTool failed";
+              setLines((l) => [...l, { kind: "system", text: result }]);
             }
-            await mc.executeTool(tool, msg.arguments);
+            bridgeRef.current?.send({
+              v: 1,
+              type: "tool_result",
+              callId: msg.id,
+              ok,
+              result,
+            });
           })();
         }
       },
     });
     bridgeRef.current = bridge;
-    void reregister(new Set());
+
+    // Created synchronously so the cleanup below can always abort it, even if
+    // the first sync is still in flight (React StrictMode remounts).
+    const registration = createRegistration({
+      manifests: MANIFESTS,
+      consented: new Set(),
+      executeRemote: (name, args) => {
+        const live = bridgeRef.current;
+        if (!live) return Promise.reject(new Error("no bridge"));
+        return live.exec(name, args);
+      },
+      resolveFields: (paths) => profileStore.resolve(paths),
+      bless: (req) =>
+        new Promise((resolve) => {
+          blessWait.current = resolve;
+          setBless(req);
+        }),
+    });
+    registrationRef.current = registration;
+    void syncTools(registration, new Set());
     bridge.send({ v: 1, type: "screencast", on: true });
 
+    const onVisibility = () => {
+      bridgeRef.current?.send({
+        v: 1,
+        type: "screencast",
+        on: !document.hidden,
+      });
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
       mc.removeEventListener("toolchange", onChange);
-      registration.current?.abort();
+      registration.abort();
+      registrationRef.current = null;
       bridge.close();
     };
-  }, [sessionToken, reregister, refreshTools]);
+  }, [sessionToken, refreshTools, syncTools]);
 
   const grant = async (origin: string) => {
     const res = await fetch(`/s/${sessionToken}/consent`, {
@@ -138,15 +197,21 @@ export function Session() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ origin }),
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      setLines((l) => [
+        ...l,
+        { kind: "system", text: `consent failed for ${origin} (${res.status})` },
+      ]);
+      return;
+    }
     const next = new Set(consented);
     next.add(origin);
     setConsented(next);
-    await reregister(next);
-    setLines((l) => [
-      ...l,
-      { kind: "system", text: `granted ${origin}` },
-    ]);
+    const registration = registrationRef.current;
+    // Only this origin's tools are added. Everything already registered keeps
+    // its own AbortController and is left alone (SPEC 2.5).
+    if (registration) await syncTools(registration, next);
+    setLines((l) => [...l, { kind: "system", text: `granted ${origin}` }]);
   };
 
   return (
@@ -192,6 +257,8 @@ export function Session() {
                 x: evt.x ?? 0,
                 y: evt.y ?? 0,
                 button: evt.button,
+                deltaX: evt.deltaX,
+                deltaY: evt.deltaY,
               });
               return;
             }

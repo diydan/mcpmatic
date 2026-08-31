@@ -36,7 +36,7 @@ export function ChatPanel({ tools, audit, lines, busy, headerRight, onSend }: Pr
       </header>
       <ul className="chat__tools">
         {tools.length === 0 ? (
-          <li className="muted">no tools until you grant an origin</li>
+          <li className="muted">no tools registered — check the log</li>
         ) : (
           tools.map((t) => (
             <li key={t.name}>

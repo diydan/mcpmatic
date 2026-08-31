@@ -24,6 +24,11 @@
   "browser": {
     "binding": "BROWSER"
   },
+  // Third-party models through AI Gateway Unified Billing: Cloudflare holds the
+  // provider credentials, so no OPENAI_API_KEY secret is needed.
+  "ai": {
+    "binding": "AI"
+  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1

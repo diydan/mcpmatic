@@ -21,8 +21,12 @@ export function openBridge(
     { resolve: (s: string) => void; reject: (e: Error) => void }
   >();
 
+  let closedByUs = false;
   ws.addEventListener("open", () => handlers.onOpen?.());
-  ws.addEventListener("close", () => handlers.onClose?.());
+  // Only an unexpected close is worth reporting; unmount closes on purpose.
+  ws.addEventListener("close", () => {
+    if (!closedByUs) handlers.onClose?.();
+  });
   ws.addEventListener("message", (ev) => {
     if (typeof ev.data !== "string") return;
     let msg: ServerMessage;
@@ -48,7 +52,10 @@ export function openBridge(
 
   return {
     send,
-    close: () => ws.close(),
+    close: () => {
+      closedByUs = true;
+      ws.close();
+    },
     exec: (name, args) =>
       new Promise((resolve, reject) => {
         const id = crypto.randomUUID();

@@ -13,6 +13,9 @@ export type AuditRow = {
   timestamp: number;
 };
 
+/** "idle" = a Browser Rendering binding exists but no browser has been launched yet. */
+export type BrowserState = "live" | "idle" | "missing";
+
 export type ClientMessage =
   | { v: 1; type: "chat"; content: string; tools: ToolSchema[] }
   | {
@@ -41,6 +44,20 @@ export type ClientMessage =
       name: string;
       arguments: Record<string, unknown>;
     }
+  /**
+   * Completion of one in-page agent turn. `callId` is the OpenAI tool-call id the
+   * DO broadcast in `tool_call` — not the `tool_exec` correlation UUID. The page
+   * sends exactly one of these per `tool_call` it receives, on every exit path
+   * (success, bless denied, tool not registered, timeout, throw), so an agent
+   * turn can never strand.
+   */
+  | {
+      v: 1;
+      type: "tool_result";
+      callId: string;
+      ok: boolean;
+      result: string;
+    }
   | { v: 1; type: "screencast"; on: boolean }
   | { v: 1; type: "ping" };
 
@@ -67,7 +84,7 @@ export type ServerMessage =
       type: "state";
       origin: string | null;
       driving: boolean;
-      browser: "live" | "missing";
+      browser: BrowserState;
     }
   | { v: 1; type: "audit"; rows: AuditRow[] }
   | { v: 1; type: "error"; message: string }
