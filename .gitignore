@@ -1,0 +1,18 @@
+node_modules
+dist
+.wrangler
+.dev.vars
+.DS_Store
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+coverage
+.vite
+
+# Strategy notes belong outside this tree (sibling mcpmatic-private/).
+# Ignore them if they are ever copied in by mistake.
+/private/
+STRATEGY.md
+HACKATHON_STRATEGY.md
+*hackathon-strategy*
