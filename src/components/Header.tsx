@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 type Props = {
   placeholder: string;
@@ -6,12 +6,29 @@ type Props = {
   onSubmit: (url: string) => void | Promise<void>;
   disabled?: boolean;
   error?: string;
+  /**
+   * Incremented by the parent when a submit succeeds. Header resets its
+   * internal value to "" whenever this prop changes, so the page can drive
+   * "clear on success" without exposing an imperative handle.
+   */
+  successKey?: number | string;
 };
 
-export function Header({ placeholder, submitLabel, onSubmit, disabled, error }: Props) {
+export function Header({
+  placeholder,
+  submitLabel,
+  onSubmit,
+  disabled,
+  error,
+  successKey,
+}: Props) {
   const [value, setValue] = useState("");
   const inputId = useId();
   const isDisabled = !!disabled || !value.trim();
+
+  useEffect(() => {
+    setValue("");
+  }, [successKey]);
 
   return (
     <header className="header">
