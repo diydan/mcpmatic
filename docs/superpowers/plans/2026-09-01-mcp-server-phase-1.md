@@ -21,7 +21,7 @@ These constraints apply to every task. They are non-negotiable.
 5. **The session DO's `runTool` is the only path.** MCP `tools/call` routes through it; no parallel implementation.
 6. **No LLM in the MCP hot path.** MCP `tools/call` is a deterministic bridge to the existing executeTool path. The model is only involved when the in-page chat panel asks for it (existing behavior).
 7. **Bash commands are run from the repo root** unless stated otherwise.
-8. **Every commit message starts with `feat:`, `fix:`, `test:`, or `chore:`** and ends with `Co-Authored-By: Claude Code <noreply@anthropic.com>`.
+8. **Every commit message follows Conventional Commits** (`feat:`, `fix:`, `test:`, `chore:`, `docs:`, plus scoped forms like `feat(mcp):`, `test(mcp):`) and ends with `Co-Authored-By: Claude Code <noreply@anthropic.com>`.
 
 ---
 
