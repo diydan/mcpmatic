@@ -9,6 +9,13 @@ still call them. Sites with no WebMCP get a synthesised tool. A local
 profile fills only the checkout fields the store’s own tools do not
 provide.
 
+**Live:** <https://mcpmatic.dan-3c7.workers.dev> — open it, grant an origin,
+and the tools appear. No login, no key, no install.
+
+In ChatGPT desktop use **GPT-5.6 Sol or Terra**: Luna has WebMCP disabled, and
+Enterprise/Edu workspaces have no site tools. Open the same `/s/<token>` URL
+there and grant the origin in that view.
+
 Architecture below. Design decisions are recorded in the commit history.
 
 ## What is true
