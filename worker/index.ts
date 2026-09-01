@@ -54,6 +54,11 @@ export default {
       return handleAuthorize(request, env);
     }
 
+    if (path === "/oauth/token") {
+      const { handleToken } = await import("./oauth/token");
+      return handleToken(request, env);
+    }
+
     const bridgeMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/bridge$/);
     if (bridgeMatch) {
       if (request.headers.get("Upgrade") !== "websocket") {

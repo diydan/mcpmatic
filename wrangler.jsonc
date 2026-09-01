@@ -13,7 +13,8 @@
       "/s/*/consent",
       "/mcp",
       "/oauth/register",
-      "/oauth/authorize"
+      "/oauth/authorize",
+      "/oauth/token"
     ]
   },
   "durable_objects": {
@@ -23,6 +24,9 @@
       { "name": "OAUTH_CODE", "class_name": "OAuthCodeDO" }
     ]
   },
+  "kv_namespaces": [
+    { "binding": "OAUTH_TOKENS", "id": "to-be-created" }
+  ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
     { "tag": "v2", "new_sqlite_classes": ["OAuthClientDO"] },
