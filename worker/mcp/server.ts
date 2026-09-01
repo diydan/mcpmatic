@@ -27,11 +27,13 @@ export type McpSession = {
 /**
  * Dispatch a parsed JSON-RPC request against the session. Pure function — no
  * env, no I/O. The HTTP wrapper (handleMcp) does auth and env lookup; this
- * does protocol.
+ * does protocol. `session` is only required for `tools/list` and `tools/call`;
+ * it may be `null` for protocol-only methods (`initialize`, `ping`) which
+ * don't touch the DO.
  */
 export async function dispatch(
   req: JsonRpcRequest,
-  session: McpSession,
+  session: McpSession | null,
 ): Promise<JsonRpcResponse> {
   const id = req.id ?? null;
 
@@ -48,6 +50,9 @@ export async function dispatch(
   }
 
   if (req.method === "tools/list") {
+    if (!session) {
+      return errorResult(id, JSONRPC_INTERNAL_ERROR, "session unavailable");
+    }
     try {
       const tools = await session.listTools();
       return success(id, { tools });
@@ -61,6 +66,9 @@ export async function dispatch(
   }
 
   if (req.method === "tools/call") {
+    if (!session) {
+      return errorResult(id, JSONRPC_INTERNAL_ERROR, "session unavailable");
+    }
     const params = req.params ?? {};
     const name = params.name;
     const args = (params.arguments ?? {}) as Record<string, unknown>;
@@ -113,12 +121,21 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
     return new Response("", { status: 204 });
   }
 
-  const stub = env.SESSION.getByName(auth.token);
-  const session: McpSession = {
-    listTools: () => stub.listTools() as Promise<unknown>,
-    callTool: (name, args) =>
-      stub.callTool(name, args) as Promise<{ ok: boolean; text: string }>,
-  };
+  // Only fetch the session DO stub when the method actually needs it. Protocol
+  // methods (`initialize`, `ping`, unknown) don't touch the DO, so this keeps
+  // e2e tests for the protocol layer free of DO mocking.
+  const needsSession =
+    parsed.req.method === "tools/list" || parsed.req.method === "tools/call";
+  const session: McpSession | null = needsSession
+    ? (() => {
+        const stub = env.SESSION.getByName(auth.token);
+        return {
+          listTools: () => stub.listTools() as Promise<unknown>,
+          callTool: (name, args) =>
+            stub.callTool(name, args) as Promise<{ ok: boolean; text: string }>,
+        };
+      })()
+    : null;
   const resp = await dispatch(parsed.req, session);
   return new Response(JSON.stringify(resp), {
     status: 200,
