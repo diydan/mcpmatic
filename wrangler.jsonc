@@ -12,9 +12,7 @@
       "/s/*/bridge",
       "/s/*/consent",
       "/mcp",
-      "/oauth/register",
-      "/oauth/authorize",
-      "/oauth/token"
+      "/oauth/*"
     ]
   },
   "durable_objects": {

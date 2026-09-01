@@ -44,19 +44,26 @@ export default {
       return handleMcp(request, env);
     }
 
-    if (path === "/oauth/register") {
-      const { handleRegister } = await import("./oauth/register");
-      return handleRegister(request, env);
-    }
-
-    if (path === "/oauth/authorize") {
-      const { handleAuthorize } = await import("./oauth/authorize");
-      return handleAuthorize(request, env);
-    }
-
-    if (path === "/oauth/token") {
-      const { handleToken } = await import("./oauth/token");
-      return handleToken(request, env);
+    // OAuth 2.1 (RFC 6749 / 7591 / 7636) surface. The /oauth/* wildcard in
+    // wrangler.jsonc `run_worker_first` ensures these reach the Worker instead
+    // of falling through to the SPA fallback. Sub-dispatch is by exact
+    // segment; the method guards are enforced by the handlers themselves
+    // (POST for register + token, GET/POST for authorize).
+    if (path.startsWith("/oauth/")) {
+      const sub = path.slice("/oauth/".length);
+      if (sub === "register") {
+        const { handleRegister } = await import("./oauth/register");
+        return handleRegister(request, env);
+      }
+      if (sub === "authorize") {
+        const { handleAuthorize } = await import("./oauth/authorize");
+        return handleAuthorize(request, env);
+      }
+      if (sub === "token") {
+        const { handleToken } = await import("./oauth/token");
+        return handleToken(request, env);
+      }
+      return new Response("not found", { status: 404, headers: FACADE_HEADERS });
     }
 
     const bridgeMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/bridge$/);
