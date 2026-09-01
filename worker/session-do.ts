@@ -140,6 +140,32 @@ export class SessionDO extends DurableObject<Env> {
     return buildToolList(consented) as unknown as ToolSchema[];
   }
 
+  /**
+   * Public RPC for the MCP server. Bridges to the same runTool the WebMCP
+   * façade calls via the bridge WebSocket. Same consent gate, same SSRF
+   * check, same audit row. The only difference: no broadcast (MCP has no
+   * socket), so we record the audit and return directly.
+   */
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ ok: boolean; text: string }> {
+    let result: { ok: boolean; text: string };
+    try {
+      result = await this.runTool(name, args);
+    } catch (err) {
+      result = {
+        ok: false,
+        text: err instanceof Error ? err.message : "tool failed",
+      };
+    }
+    const fieldNames = manifestFor(name)?.fillsFrom ?? [];
+    const auditOrigin =
+      originOfTool(name) ?? this.currentOrigin() ?? "";
+    this.recordAudit(auditOrigin, name, fieldNames);
+    return result;
+  }
+
   async destroy(): Promise<void> {
     await this.teardownBrowser();
     await this.ctx.storage.deleteAll();
