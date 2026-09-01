@@ -1,7 +1,15 @@
-/* Generated shape (wrangler types). SESSION is a typed stub of SessionDO. */
+/* Generated shape (wrangler types). SESSION is a typed stub of SessionDO.
+ * OAUTH_CLIENT is a typed stub of OAuthClientDO (RFC 7591 dynamic client
+ * registration — one DO per client_id). OAUTH_CODE is a typed stub of
+ * OAuthCodeDO (single-use auth code storage — one DO per code). OAUTH_TOKENS
+ * is a KV namespace holding minted access + refresh tokens for /oauth/token
+ * (Task 7). */
 declare namespace Cloudflare {
   interface Env {
     SESSION: DurableObjectNamespace<import("./worker/session-do").SessionDO>;
+    OAUTH_CLIENT: DurableObjectNamespace<import("./worker/oauth/client-do").OAuthClientDO>;
+    OAUTH_CODE: DurableObjectNamespace<import("./worker/oauth/code-do").OAuthCodeDO>;
+    OAUTH_TOKENS: KVNamespace;
     BROWSER?: Fetcher;
     /**
      * AI binding. Typed as the subset we use so the model id can be any

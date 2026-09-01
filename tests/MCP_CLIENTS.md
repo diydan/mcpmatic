@@ -45,7 +45,88 @@ field, document this clearly — it determines the auth design.
 
 ## Findings
 
-(populated by the engineer running the manual tests)
+(populated by the Phase 1.5 work — further manual testing against real
+Claude Desktop and ChatGPT builds still pending a deployed Worker URL)
+
+### Wire-format compatibility
+
+`tests/oauth-e2e-sdk.test.ts` drives the real
+`@modelcontextprotocol/sdk` (1.30+) through the full OAuth flow —
+register → authorize → token → SDK `connect()` → `serverInfo.name === "mcpmatic"`.
+The SDK's `client.connect()` succeeds without modifying either side, which
+proves the Phase 1.5 OAuth surface works against any spec-compliant MCP
+client.
+
+### Auth at `/mcp`
+
+Two bearer shapes work:
+
+- **64 hex chars** (case-insensitive) — Phase 1 session token, pass-through
+  to the SessionDO. No I/O in the bridge for this branch.
+- **43 base64url chars** — Phase 1.5 OAuth access token, resolved via
+  `worker/oauth/mcp-bridge.ts` → `OAUTH_TOKENS.get("token:<access_token>")`
+  → `userSessionToken` → SessionDO.
+
+Unknown bearer → 401. Expired bearer → 401 (KV's `expirationTtl` is the
+primary enforcement; the payload's `expiresAt` is a second-line defense).
+
+### Bearer test outcomes
+
+- **First request behavior.** The SDK-driven test confirms the SDK sends
+  `Authorization: Bearer <access_token>` on the first `/mcp` call (after
+  acquiring it via `/oauth/token`). The transport merges
+  `requestInit.headers` into every request via `_commonHeaders()`.
+
+- **The 401.** The bridge returns an identical 401 shape for "unknown
+  bearer" and "malformed bearer" — no information leak about which token
+  shapes were tried. The SDK's transport wraps the 401 in a
+  `StreamableHTTPError` and `client.connect()` rejects before it ever
+  sees an `initialize` result.
+
+- **Dynamic client registration.** `tests/oauth-e2e.test.ts` step 2
+  confirms `/oauth/register` issues a `clientId` (UUID v4) + `clientSecret`
+  (32 random bytes, base64url). RFC 7591-compliant; `redirect_uris` are
+  SSRF-checked at registration time.
+
+- **Redirect URI.** Brief-mandated exact-string match — the registered
+  `redirect_uri` must equal the one on the token-exchange call byte for
+  byte. Real-world clients that need query-string variants must register
+  each variant as a separate `redirect_uri`.
+
+- **Refresh behavior.** `tests/oauth-e2e.test.ts`'s refresh-rotation test
+  confirms a new access + refresh pair is minted and the old refresh key
+  is deleted from KV. A second use of the old refresh token returns
+  `400 invalid_grant` because KV.get on the deleted key returns null.
+
+- **Error surfacing.** 400/401 JSON error responses follow RFC 6749 §5.2
+  shape (`{error, error_description}`). The consent form's HTML uses POST
+  + `Referrer-Policy: no-referrer` + `Cache-Control: no-store`, so the
+  session token never leaks via `Referer`, browser history, or
+  intermediary caches.
+
+### Real Claude Desktop / ChatGPT testing
+
+Still pending — requires a deployed Worker URL. The
+`tests/oauth-smoke.sh` script is the post-deploy manual procedure; the
+engineer should run it against `https://mcpmatic.dan-3c7.workers.dev`
+after the Phase 1.5 deploy (which requires
+`wrangler kv namespace create OAUTH_TOKENS` first to replace the
+`"to-be-created"` placeholder id in `wrangler.jsonc`).
+
+### Latent bugs in `worker/mcp/server.ts` fixed in Task 10
+
+The SDK-driven e2e flushed out two real bugs that Phase 1's hand-rolled
+tests (which used `id: 1`) missed. Both would have blocked every
+compliant MCP client:
+
+1. `new Response("", { status: 204 })` → `new Response(null, { status: 204 })`.
+   Per RFC 9110 §6.4.1 a 204 response MUST NOT include a body. Cloudflare's
+   runtime accepted the empty string; Node did not, and every MCP
+   notification round-trip failed.
+2. `if (!parsed.req.id)` → `if (parsed.req.id === undefined)`. The MCP SDK
+   uses integer ids starting at 0 for the first request; `!0` is `true`,
+   so every real `initialize` was misrouted to the notification path.
+   No compliant MCP client could ever have talked to the Worker.
 
 ## Decision matrix
 

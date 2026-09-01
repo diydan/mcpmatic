@@ -89,7 +89,35 @@ export class SessionDO extends DurableObject<Env> {
     if (request.headers.get("Upgrade") === "websocket") {
       return this.acceptBridge(request);
     }
+    const url = new URL(request.url);
+    if (url.pathname === "/check") {
+      // `createSession` in worker/index.ts inserts a sentinel row with the
+      // token as its value. The OAuth authorize handler asks the DO "does
+      // this session exist?" before binding the token to an auth code — a
+      // random pasted string must NOT mint an OAuth code.
+      const row = this.ctx.storage.sql
+        .exec<{ value: string }>(
+          `SELECT value FROM meta WHERE key = 'sessionToken' LIMIT 1`,
+        )
+        .toArray()[0];
+      if (!row) return new Response("not found", { status: 404 });
+      return Response.json({ ok: true });
+    }
     return new Response("expected websocket", { status: 400 });
+  }
+
+  /**
+   * RPC called by `createSession` (worker/index.ts) to plant a sentinel
+   * row that the OAuth authorize handler's /check reads. Idempotent:
+   * re-initializing the same session overwrites the row with the same
+   * value, which is fine — the token is regenerated per call anyway.
+   */
+  async initSession(token: string): Promise<void> {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('sessionToken', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      token,
+    );
   }
 
   async grantConsent(origin: string): Promise<{ ok: true }> {

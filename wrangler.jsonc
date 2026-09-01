@@ -11,16 +11,24 @@
       "/sessions/*",
       "/s/*/bridge",
       "/s/*/consent",
-      "/mcp"
+      "/mcp",
+      "/oauth/*"
     ]
   },
   "durable_objects": {
     "bindings": [
-      { "name": "SESSION", "class_name": "SessionDO" }
+      { "name": "SESSION", "class_name": "SessionDO" },
+      { "name": "OAUTH_CLIENT", "class_name": "OAuthClientDO" },
+      { "name": "OAUTH_CODE", "class_name": "OAuthCodeDO" }
     ]
   },
+  "kv_namespaces": [
+    { "binding": "OAUTH_TOKENS", "id": "to-be-created" }
+  ],
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["SessionDO"] }
+    { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["OAuthClientDO"] },
+    { "tag": "v3", "new_sqlite_classes": ["OAuthCodeDO"] }
   ],
   "browser": {
     "binding": "BROWSER"

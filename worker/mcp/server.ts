@@ -106,7 +106,7 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") {
     return new Response("method not allowed", { status: 405 });
   }
-  const auth = authenticate(request);
+  const auth = await authenticate(request, env);
   if (!auth.ok) return auth.response;
 
   const body = await request.text();
@@ -116,9 +116,18 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
     status: 200, // JSON-RPC errors are 200 with error envelope
     headers: { "content-type": "application/json" },
   });
-  if (!parsed.req.id) {
-    // Notifications get no response.
-    return new Response("", { status: 204 });
+  if (parsed.req.id === undefined) {
+    // Notifications get no response. Per RFC 7230 §3.3.3 / RFC 9110
+    // §6.4.1 a 204 response MUST NOT include a body, and the standard
+    // `Response` constructor enforces this (passing "" raises
+    // "Invalid response status code 204"). Use null + explicit zero-length
+    // to stay portable across the Workers runtime and Node.
+    //
+    // NOTE: must check for `undefined` specifically, not `!parsed.req.id` —
+    // the MCP SDK uses integer ids starting at 0, and `!0` is truthy. A
+    // request with `id: 0` is NOT a notification and must produce a
+    // proper JSON-RPC response.
+    return new Response(null, { status: 204 });
   }
 
   // Only fetch the session DO stub when the method actually needs it. Protocol
