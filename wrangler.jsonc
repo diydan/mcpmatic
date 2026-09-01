@@ -12,18 +12,21 @@
       "/s/*/bridge",
       "/s/*/consent",
       "/mcp",
-      "/oauth/register"
+      "/oauth/register",
+      "/oauth/authorize"
     ]
   },
   "durable_objects": {
     "bindings": [
       { "name": "SESSION", "class_name": "SessionDO" },
-      { "name": "OAUTH_CLIENT", "class_name": "OAuthClientDO" }
+      { "name": "OAUTH_CLIENT", "class_name": "OAuthClientDO" },
+      { "name": "OAUTH_CODE", "class_name": "OAuthCodeDO" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
-    { "tag": "v2", "new_sqlite_classes": ["OAuthClientDO"] }
+    { "tag": "v2", "new_sqlite_classes": ["OAuthClientDO"] },
+    { "tag": "v3", "new_sqlite_classes": ["OAuthCodeDO"] }
   ],
   "browser": {
     "binding": "BROWSER"

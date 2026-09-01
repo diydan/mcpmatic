@@ -1,13 +1,9 @@
 import { SessionDO } from "./session-do";
+import { OAuthClientDO } from "./oauth/client-do";
+import { OAuthCodeDO } from "./oauth/code-do";
+import { FACADE_HEADERS } from "./facade-headers";
 
-export { SessionDO };
-
-const FACADE_HEADERS: Record<string, string> = {
-  "Origin-Agent-Cluster": "?1",
-  "Permissions-Policy": "tools=*",
-  "Referrer-Policy": "no-referrer",
-  "X-Content-Type-Options": "nosniff",
-};
+export { SessionDO, OAuthClientDO, OAuthCodeDO };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -15,7 +11,7 @@ export default {
     const path = url.pathname;
 
     if (request.method === "POST" && path === "/sessions") {
-      return createSession(request);
+      return createSession(request, env);
     }
 
     const sessionMatch = path.match(/^\/sessions\/([A-Fa-f0-9]{64})$/);
@@ -53,6 +49,11 @@ export default {
       return handleRegister(request, env);
     }
 
+    if (path === "/oauth/authorize") {
+      const { handleAuthorize } = await import("./oauth/authorize");
+      return handleAuthorize(request, env);
+    }
+
     const bridgeMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/bridge$/);
     if (bridgeMatch) {
       if (request.headers.get("Upgrade") !== "websocket") {
@@ -69,12 +70,18 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function createSession(request: Request): Promise<Response> {
+async function createSession(request: Request, env: Env): Promise<Response> {
   const tokenBytes = new Uint8Array(32);
   crypto.getRandomValues(tokenBytes);
   const sessionToken = [...tokenBytes]
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+  // Plant a sentinel row on the DO so the OAuth authorize handler can
+  // verify the token before binding it to an auth code. Without this,
+  // a pasted random string would mint an OAuth code bound to a chosen
+  // token.
+  const stub = env.SESSION.getByName(sessionToken);
+  await stub.initSession(sessionToken);
   const origin = new URL(request.url).origin;
   return json({
     sessionToken,
