@@ -43,6 +43,11 @@ export default {
       return json({ ok: true, origin });
     }
 
+    if (path === "/mcp") {
+      const { handleMcp } = await import("./mcp/server");
+      return handleMcp(request, env);
+    }
+
     const bridgeMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/bridge$/);
     if (bridgeMatch) {
       if (request.headers.get("Upgrade") !== "websocket") {

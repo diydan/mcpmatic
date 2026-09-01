@@ -10,7 +10,8 @@
       "/sessions",
       "/sessions/*",
       "/s/*/bridge",
-      "/s/*/consent"
+      "/s/*/consent",
+      "/mcp"
     ]
   },
   "durable_objects": {
