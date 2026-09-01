@@ -212,6 +212,25 @@ export function Session() {
     // its own AbortController and is left alone (SPEC 2.5).
     if (registration) await syncTools(registration, next);
     setLines((l) => [...l, { kind: "system", text: `granted ${origin}` }]);
+
+    // A site we have no manifest for gains no tools of its own, so granting it
+    // would look like nothing happened. Send the remote browser there — through
+    // the registered tool, not around it, so the invocation path stays
+    // getTools/executeTool even when a human started it.
+    if (MANIFESTS.some((m) => m.origin === origin)) return;
+    try {
+      const mc = ensureModelContext();
+      const tool = (await mc.getTools()).find((t) => t.name === "navigate_to");
+      if (tool) await mc.executeTool(tool, { origin });
+    } catch (err) {
+      setLines((l) => [
+        ...l,
+        {
+          kind: "system",
+          text: err instanceof Error ? err.message : "navigate failed",
+        },
+      ]);
+    }
   };
 
   return (
