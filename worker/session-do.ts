@@ -144,12 +144,12 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /**
-   * Public, read-only view of the consent list. Kept synchronous (SQL
+   * Read-only view of the consent list. Kept synchronous (SQL
    * reads are sync inside a DO) so callers can gate a tool on it without
    * awaiting. The set is what `listTools` filters by and what
    * `runTool` checks via `consented()` before launching a navigation.
    */
-  readConsent(): string[] {
+  private readConsent(): string[] {
     const row = this.ctx.storage.sql
       .exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'consent' LIMIT 1`)
       .toArray()[0];
