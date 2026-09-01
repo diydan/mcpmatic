@@ -30,6 +30,7 @@ import {
 } from "./agent";
 import { MANIFESTS, manifestFor, originOfTool } from "./manifests";
 import { callNativeTool, type EvaluateFn } from "./native-webmcp";
+import { WEBMCP_POLYFILL } from "./inject-webmcp";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 /** Grace after the last client disconnects before the browser is released. */
@@ -53,6 +54,7 @@ type LiveBrowser = {
       newCDPSession: (page: unknown) => Promise<CdpSession>;
     };
     setViewportSize?: (size: { width: number; height: number }) => Promise<void>;
+    addInitScript?: (script: string | { content: string }) => Promise<void>;
   };
   cdp: CdpSession | null;
 };
@@ -433,10 +435,10 @@ export class SessionDO extends DurableObject<Env> {
         return { ok: false, text: nativeFailure(manifest.nativeName, manifest.origin, native) };
       }
       this.setCurrentOrigin(manifest.origin);
-      return {
-        ok: true,
-        text: native.text ?? `native ${manifest.nativeName} on ${manifest.origin}`,
-      };
+      const how = native.polyfilled
+        ? `${manifest.origin}'s own ${manifest.nativeName} (WebMCP supplied by this session)`
+        : `${manifest.origin}'s own ${manifest.nativeName} (native WebMCP)`;
+      return { ok: true, text: native.text ?? `ran ${how}` };
     }
     for (const step of manifest.steps) {
       await this.runStep(live, step, args);
@@ -546,6 +548,14 @@ export class SessionDO extends DurableObject<Env> {
       const browser = await launch(this.env.BROWSER!, { recording: false });
       const page = await browser.newPage();
       await page.setViewportSize?.(VIEWPORT);
+      // Before any page script, on every document: give the remote browser the
+      // WebMCP API it lacks, so a storefront's own script has something to
+      // register its own tools on. See inject-webmcp.ts.
+      try {
+        await page.addInitScript?.({ content: WEBMCP_POLYFILL });
+      } catch {
+        /* older binding without addInitScript; native path will report why */
+      }
       let cdp: CdpSession | null = null;
       try {
         cdp = wrapCdp(await page.context().newCDPSession(page));

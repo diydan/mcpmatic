@@ -15,11 +15,16 @@ export type ToolManifest = {
   /** When set, try this tool on the remote page's own document.modelContext first. */
   nativeName?: string;
   kind?: ToolKind;
+  /**
+   * For a proxied tool this mirrors the remote tool's own schema, so the model
+   * produces arguments that pass straight through untranslated. JSON Schema is
+   * nested, so the value type is deliberately open.
+   */
   inputSchema: {
     type: "object";
-    properties: Record<string, { type: string; description?: string }>;
+    properties: Record<string, unknown>;
     required?: string[];
-    additionalProperties: false;
+    additionalProperties?: false;
   };
   fillsFrom?: string[];
   steps: ManifestStep[];

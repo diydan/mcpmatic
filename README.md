@@ -21,6 +21,12 @@ learns a shipping address when checkout is filled.
 - Only declared paths resolve (`fillsFrom: ["address.postcode"]` is that key).
 - Values are never logged. The audit table has no value column.
 - Native WebMCP on the remote page is preferred over click replay.
+- `document.modelContext` is a browser API behind a Chrome origin trial, and the
+  remote browser does not have it. This session installs the API into the remote
+  page before the page's own scripts run, so a storefront that ships WebMCP can
+  register its own tools. We add no tools of our own there — Allbirds registers
+  ten, and we call them. Without this, a WebMCP storefront exposes nothing at
+  all in a browser without the trial.
 - Keystrokes in the viewport cross this worker in plaintext and are not stored.
 
 ChatGPT’s site tools are per page. A store’s tools live on that store. One

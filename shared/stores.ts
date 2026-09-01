@@ -45,13 +45,31 @@ function shopifyTools(store: Store): ToolManifest[] {
       kind: "shopify-webmcp",
       origin,
       description: `Search ${store.label}'s catalog via the store's own Shopify WebMCP search_catalog tool (not a click replay). Query products, collections, articles.`,
+      // Mirrors Shopify's own search_catalog schema so arguments pass through
+      // untranslated. Verified against allbirds.com 2026-09-01.
       inputSchema: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Search query" },
+          catalog: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Search query string." },
+              pagination: {
+                type: "object",
+                properties: {
+                  limit: {
+                    type: "integer",
+                    description: "Max results per type (1-10). Defaults to 5.",
+                    minimum: 1,
+                    maximum: 10,
+                  },
+                },
+              },
+            },
+            required: ["query"],
+          },
         },
-        required: ["query"],
-        additionalProperties: false,
+        required: ["catalog"],
       },
       steps: [
         { action: "goto", url: `${origin}/search?q={{query}}` },
@@ -63,16 +81,47 @@ function shopifyTools(store: Store): ToolManifest[] {
       kind: "shopify-webmcp",
       origin,
       description: `Add or change cart lines on ${store.label} via native Shopify WebMCP update_cart. Same storefront actions the theme uses.`,
+      // Mirrors Shopify's own update_cart schema. Verified 2026-09-01.
       inputSchema: {
         type: "object",
         properties: {
-          instruction: {
-            type: "string",
-            description: "What to add, remove, or change, including variant if known",
+          cart: {
+            type: "object",
+            properties: {
+              line_items: {
+                type: "array",
+                description: "Items to add or update (1-10).",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: {
+                      type: "string",
+                      description:
+                        "Existing cart line id from get_cart. Use to update or remove an existing line. Omit when adding new items.",
+                    },
+                    handle: {
+                      type: "string",
+                      description:
+                        "Product handle. Adds the selected or first available variant.",
+                    },
+                    query: {
+                      type: "string",
+                      description:
+                        "Search query to find and add the selected or first available variant.",
+                    },
+                    quantity: {
+                      type: "integer",
+                      description: "Quantity for this line. 0 removes it.",
+                      minimum: 0,
+                    },
+                  },
+                },
+              },
+            },
+            required: ["line_items"],
           },
         },
-        required: ["instruction"],
-        additionalProperties: false,
+        required: ["cart"],
       },
       steps: [],
     },
