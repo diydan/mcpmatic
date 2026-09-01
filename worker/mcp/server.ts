@@ -106,7 +106,7 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") {
     return new Response("method not allowed", { status: 405 });
   }
-  const auth = authenticate(request);
+  const auth = await authenticate(request, env);
   if (!auth.ok) return auth.response;
 
   const body = await request.text();
