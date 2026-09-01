@@ -102,6 +102,32 @@ input {
   text-transform: uppercase;
 }
 
+.header {
+  width: 100%;
+}
+.header__form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+.header__input {
+  flex: 1;
+  min-width: 0;
+}
+.header__submit {
+  flex: 0 0 auto;
+  padding-inline: 1.2rem;
+}
+.header__error {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin: 0.45rem 0 0;
+  padding-inline: 1rem;
+}
+@media (max-width: 520px) {
+  .header__form { flex-direction: column; }
+}
+
 .home {
   max-width: 52rem;
   margin: 0 auto;
