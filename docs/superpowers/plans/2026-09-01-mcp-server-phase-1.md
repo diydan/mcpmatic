@@ -1402,8 +1402,17 @@ Append at the bottom of this file:
 ```markdown
 ## Outcome
 
-(populated by Task 11 — which client path was taken, and the filename of the
-Phase 1.5 plan that follows)
+**Outcome A: Both clients do full OAuth.**
+
+Phase 1 ships bearer-token auth at `/mcp` as the baseline. Phase 1.5 replaces it with full OAuth 2.0 + PKCE so spec-compliant MCP clients (Claude desktop, ChatGPT) handle the auth flow themselves — no token paste, no manual `/sessions` call.
+
+**Decision:** Pre-committed by the engineer before Task 11's empirical ChatGPT test was run. The engineer reasoned that the OAuth path is the spec-aligned target and the empirical test is a confirmation step, not a gate — if the test reveals ChatGPT doesn't support the full OAuth flow, we re-evaluate against Outcome B at that point. Bearer-token auth remains functional as a fallback for clients that don't support OAuth and for human engineers debugging.
+
+**Phase 1.5 plan:** `docs/superpowers/plans/2026-09-01-mcp-server-phase-1.5-oauth.md`
+
+**Production deploy:** Phase 1 deployed at `https://mcpmatic.dan-3c7.workers.dev` (version `cf48445c-b735-4b56-aa46-b840d0ac4c3e`). End-to-end smoke test passed: 401 unauth → 200 initialize with serverInfo → 200 tools/list with three SPINE tools.
+
+**Task 11 status:** Skipped at the engineer's direction. The `tests/MCP_CLIENTS.md` Findings section remains empty — populate it when running real-client tests during Phase 1.5 implementation (or as a follow-up audit).
 ```
 
 - [ ] **Step 2: Decide and create the Phase 1.5 plan**
