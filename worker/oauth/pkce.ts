@@ -1,3 +1,5 @@
+import { base64urlNoPad } from "./encoding";
+
 /**
  * Verify a PKCE code_verifier against a stored S256 code_challenge.
  * Returns true iff base64url-no-pad(SHA256(verifier)) === challenge.
@@ -12,11 +14,6 @@ export async function verifyPkce(verifier: string, challenge: string): Promise<b
   const computed = base64urlNoPad(new Uint8Array(digest));
   // Constant-time compare to prevent timing attacks.
   return timingSafeEqual(computed, challenge);
-}
-
-function base64urlNoPad(bytes: Uint8Array): string {
-  const b64 = btoa(String.fromCharCode(...bytes));
-  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function timingSafeEqual(a: string, b: string): boolean {

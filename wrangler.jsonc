@@ -11,16 +11,19 @@
       "/sessions/*",
       "/s/*/bridge",
       "/s/*/consent",
-      "/mcp"
+      "/mcp",
+      "/oauth/register"
     ]
   },
   "durable_objects": {
     "bindings": [
-      { "name": "SESSION", "class_name": "SessionDO" }
+      { "name": "SESSION", "class_name": "SessionDO" },
+      { "name": "OAUTH_CLIENT", "class_name": "OAuthClientDO" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["SessionDO"] }
+    { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["OAuthClientDO"] }
   ],
   "browser": {
     "binding": "BROWSER"

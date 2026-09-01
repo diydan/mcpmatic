@@ -48,6 +48,11 @@ export default {
       return handleMcp(request, env);
     }
 
+    if (path === "/oauth/register") {
+      const { handleRegister } = await import("./oauth/register");
+      return handleRegister(request, env);
+    }
+
     const bridgeMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/bridge$/);
     if (bridgeMatch) {
       if (request.headers.get("Upgrade") !== "websocket") {
