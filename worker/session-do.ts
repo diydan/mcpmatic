@@ -29,6 +29,7 @@ import {
   type ChatTurn,
 } from "./agent";
 import { MANIFESTS, manifestFor, originOfTool } from "./manifests";
+import { buildToolList } from "./mcp/tools";
 import { callNativeTool, type EvaluateFn } from "./native-webmcp";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
 
@@ -127,6 +128,16 @@ export class SessionDO extends DurableObject<Env> {
       fieldNames: JSON.parse(r.field_names) as string[],
       timestamp: r.ts,
     }));
+  }
+
+  /**
+   * Public RPC for the MCP server. Returns the tools this session exposes,
+   * filtered by consent. SPINE is always present; per-origin manifests only
+   * for granted origins.
+   */
+  async listTools(): Promise<ToolSchema[]> {
+    const consented = new Set(this.readConsent());
+    return buildToolList(consented) as unknown as ToolSchema[];
   }
 
   async destroy(): Promise<void> {
