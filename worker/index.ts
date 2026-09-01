@@ -2,6 +2,8 @@ import { SessionDO } from "./session-do";
 import { OAuthClientDO } from "./oauth/client-do";
 import { OAuthCodeDO } from "./oauth/code-do";
 import { FACADE_HEADERS } from "./facade-headers";
+import { isPrivateUrl } from "./is-private-url";
+import { makeResolve4 } from "./doh-resolve4";
 
 export { SessionDO, OAuthClientDO, OAuthCodeDO };
 
@@ -88,17 +90,89 @@ async function createSession(request: Request, env: Env): Promise<Response> {
   const sessionToken = [...tokenBytes]
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+
+  // Optional `{ origin: string }` body. Validation lives HERE in the worker,
+  // not in the DO — the DO is a persistence layer; the worker is the policy
+  // layer. Back-compat is load-bearing: Home.tsx and any older caller POSTs
+  // without a body, and that flow must continue to work identically.
+  //
+  // Body parse rules:
+  //   - No body at all (Content-Length 0 or absent / non-JSON Content-Type)
+  //     → treated as no origin. Old clients are unaffected.
+  //   - application/json with invalid JSON → 400 { error: "invalid body" }.
+  //   - application/json with `{}` or no `origin` key → no origin.
+  //   - { origin: "" } → no origin (empty string treated as absent).
+  //   - { origin: <non-string> } → 400 { error: "invalid origin" }.
+  //   - { origin: <string> } that fails parse / https / isPrivateUrl
+  //     → 400 { error: "invalid origin" }.
+  const seededOrigin = await parseAndValidateOrigin(request);
+  // `parseAndValidateOrigin` returns a `Response` on any 400 path; the
+  // caller forwards it directly. `undefined` means "no origin to seed"
+  // (back-compat or absent/empty `origin` field).
+  if (seededOrigin instanceof Response) return seededOrigin;
+
   // Plant a sentinel row on the DO so the OAuth authorize handler can
   // verify the token before binding it to an auth code. Without this,
   // a pasted random string would mint an OAuth code bound to a chosen
-  // token.
+  // token. If `seededOrigin` is set, the DO persists it in the same
+  // SQL transaction as the sentinel row (see SessionDO.initSession).
   const stub = env.SESSION.getByName(sessionToken);
-  await stub.initSession(sessionToken);
+  await stub.initSession(sessionToken, seededOrigin);
   const origin = new URL(request.url).origin;
   return json({
     sessionToken,
     url: `${origin}/s/${sessionToken}`,
   });
+}
+
+/**
+ * Read the optional `{ origin }` body of POST /sessions and validate it.
+ * Returns `undefined` for "no seed" (back-compat) and a string for the
+ * validated origin. Returns a `Response` to short-circuit on any 400 — the
+ * caller forwards it to the client.
+ */
+async function parseAndValidateOrigin(
+  request: Request,
+): Promise<string | undefined | Response> {
+  const contentType = request.headers.get("content-type") ?? "";
+  // No body or non-JSON Content-Type: back-compat path. `request.json()`
+  // would throw on these (an empty body is a syntax error in JSON), so we
+  // must skip it. Most callers today send no body at all.
+  if (!contentType.includes("application/json")) return undefined;
+  let body: { origin?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return json({ error: "invalid body" }, 400);
+  }
+  const raw = body.origin;
+  // Absent / explicit-empty / null: no seed. We do not validate these.
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  if (typeof raw !== "string") {
+    return json({ error: "invalid origin" }, 400);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return json({ error: "invalid origin" }, 400);
+  }
+  // Same protocol rule as the existing /s/<token>/consent endpoint: the
+  // remote browser is reached over https only. isPrivateUrl will also
+  // fail-closed on non-http(s) schemes, but we short-circuit early so the
+  // user gets a clear message.
+  if (parsed.protocol !== "https:") {
+    return json({ error: "invalid origin" }, 400);
+  }
+  // SSRF guard: fail-closed on private IP literals, on resolver errors,
+  // and on any resolved A/AAAA record pointing at private space. See
+  // worker/is-private-url.ts for the threat model and tests/ssrf.test.ts
+  // for the guard's own coverage.
+  const blocked = await isPrivateUrl(raw, makeResolve4());
+  if (blocked) {
+    return json({ error: "invalid origin" }, 400);
+  }
+  return raw;
 }
 
 function json(data: unknown, status = 200): Response {

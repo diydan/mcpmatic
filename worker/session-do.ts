@@ -111,13 +111,55 @@ export class SessionDO extends DurableObject<Env> {
    * row that the OAuth authorize handler's /check reads. Idempotent:
    * re-initializing the same session overwrites the row with the same
    * value, which is fine — the token is regenerated per call anyway.
+   *
+   * If `origin` is provided it has already been validated by the worker
+   * (URL parse, https, isPrivateUrl) — see `parseAndValidateOrigin` in
+   * worker/index.ts. We persist the consent alongside the sentinel
+   * meta row in a single SQL transaction so partial writes (sentinel
+   * without consent, or vice versa) cannot escape into the DO state.
    */
-  async initSession(token: string): Promise<void> {
-    this.ctx.storage.sql.exec(
-      `INSERT INTO meta (key, value) VALUES ('sessionToken', ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      token,
-    );
+  async initSession(token: string, origin?: string): Promise<void> {
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO meta (key, value) VALUES ('sessionToken', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        token,
+      );
+      if (origin) {
+        // Mirrors `grantConsent`'s storage shape: a single meta row
+        // holding the JSON array of consented origins. The seed path is
+        // intentionally idempotent against an already-seeded origin so a
+        // replay of POST /sessions doesn't corrupt the array.
+        const allowed = this.readConsent();
+        if (!allowed.includes(origin)) {
+          allowed.push(origin);
+          this.ctx.storage.sql.exec(
+            `INSERT INTO meta (key, value) VALUES ('consent', ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+            JSON.stringify(allowed),
+          );
+        }
+      }
+    });
+  }
+
+  /**
+   * Public, read-only view of the consent list. Kept synchronous (SQL
+   * reads are sync inside a DO) so callers can gate a tool on it without
+   * awaiting. The set is what `listTools` filters by and what
+   * `runTool` checks via `consented()` before launching a navigation.
+   */
+  readConsent(): string[] {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'consent' LIMIT 1`)
+      .toArray()[0];
+    if (!row) return [];
+    try {
+      const parsed = JSON.parse(row.value) as unknown;
+      return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
   }
 
   async grantConsent(origin: string): Promise<{ ok: true }> {
@@ -686,19 +728,6 @@ export class SessionDO extends DurableObject<Env> {
       .catch(() => {
         /* audit is advisory; the row is already written */
       });
-  }
-
-  private readConsent(): string[] {
-    const row = this.ctx.storage.sql
-      .exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'consent' LIMIT 1`)
-      .toArray()[0];
-    if (!row) return [];
-    try {
-      const parsed = JSON.parse(row.value) as unknown;
-      return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
-    } catch {
-      return [];
-    }
   }
 
   private consented(origin: string): boolean {
