@@ -147,7 +147,7 @@ input {
   font-size: 0.72rem;
 }
 .lede { font-size: 1.15rem; max-width: 36rem; }
-.home__go { margin-top: 1.6rem; }
+.home__start { margin-top: 1.6rem; }
 
 .use-cases {
   display: grid;

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Header } from "../components/Header";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { STORES } from "../../shared/stores";
 
@@ -25,27 +26,42 @@ export function Home() {
         ChatGPT’s tools are per-page. Shopify’s tools live on the storefront.
         This page is the session that spans merchants without replacing either.
       </p>
-      <button
-        type="button"
-        className="primary home__go"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          setError(null);
-          try {
-            const res = await fetch("/sessions", { method: "POST" });
-            if (!res.ok) throw new Error(`session failed (${res.status})`);
-            const body = (await res.json()) as { sessionToken: string };
-            nav(`/s/${body.sessionToken}`);
-          } catch (err) {
-            setError(err instanceof Error ? err.message : "failed");
-            setBusy(false);
-          }
-        }}
-      >
-        {busy ? "Opening…" : "Open a session"}
-      </button>
-      {error ? <p className="error">{error}</p> : null}
+      <div className="home__start">
+        <Header
+          placeholder="https://example.com"
+          submitLabel="Go"
+          disabled={busy}
+          error={error ?? undefined}
+          onSubmit={async (origin) => {
+            setError(null);
+            setBusy(true);
+            try {
+              const res = await fetch("/sessions", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ origin }),
+              });
+              if (!res.ok) {
+                const { error: msg } = (await res
+                  .json()
+                  .catch(() => ({ error: "request failed" }))) as {
+                  error?: string;
+                };
+                setError(msg || "request failed");
+                return;
+              }
+              const { sessionToken } = (await res.json()) as {
+                sessionToken: string;
+              };
+              nav(`/s/${sessionToken}`);
+            } catch {
+              setError("request failed");
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      </div>
 
       <section className="use-cases" aria-label="Demo origins">
         {STORES.map((store) => (
