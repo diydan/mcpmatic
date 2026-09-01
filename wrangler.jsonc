@@ -23,7 +23,7 @@
     ]
   },
   "kv_namespaces": [
-    { "binding": "OAUTH_TOKENS", "id": "to-be-created" }
+    { "binding": "OAUTH_TOKENS", "id": "4c1c248d70a8467287d8e693877ab4bb" }
   ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
