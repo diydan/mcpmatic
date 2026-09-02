@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
 import type { AuditRow, ToolSchema } from "../../shared/protocol";
 
 type Line =
@@ -37,11 +39,39 @@ export function ChatPanel({ tools, audit, lines, busy, onSend }: Props) {
         )}
       </ul>
       <div className="chat__log" ref={scroller} role="log">
-        {lines.map((line, i) => (
-          <p key={i} data-kind={line.kind}>
-            {line.text}
-          </p>
-        ))}
+        {lines.map((line, i) => {
+          // Assistant and tool lines come from uncontrolled sources
+          // (LLM output via WebSocket, JSON-shaped tool results), so we
+          // render them as Markdown. User and system lines are short
+          // status text by author — Markdown there would be pure noise.
+          // rehype-sanitize strips any HTML that would survive the
+          // Markdown parser's own HTML stripping (default `skipHtml:
+          // true` in react-markdown v10), so XSS in LLM output can't
+          // reach the DOM.
+          //
+          // User/system lines stay as `<p>` (clean semantic and matches
+          // the existing .chat__log p[data-kind="..."] CSS). Markdown
+          // lines use a `<div>` wrapper because ReactMarkdown emits its
+          // own block-level elements and nesting those inside a `<p>`
+          // would be invalid HTML; the CSS keys off `[data-kind="..."]`
+          // without a tag qualifier so both shapes pick up the styling.
+          const rich = line.kind === "assistant" || line.kind === "tool";
+          return rich ? (
+            <div
+              key={i}
+              data-kind={line.kind}
+              className="chat__line chat__line--rich"
+            >
+              <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
+                {line.text}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <p key={i} data-kind={line.kind}>
+              {line.text}
+            </p>
+          );
+        })}
       </div>
       <form
         className="chat__form"

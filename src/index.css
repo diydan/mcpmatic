@@ -226,9 +226,16 @@ input {
   overflow: auto;
   padding: 1rem 1.2rem;
 }
-.chat__log p { margin: 0 0 0.7rem; }
-.chat__log p[data-kind="user"] { color: var(--primary); }
-.chat__log p[data-kind="tool"] { color: var(--warn); font-size: 0.8rem; }
+.chat__log .chat__line { margin: 0 0 0.7rem; }
+/* No tag qualifier: assistant/tool lines render through ReactMarkdown
+   as a <div> wrapper, user/system lines as <p>; the selector below
+   keys off `data-kind` so both are styled uniformly. */
+.chat__log [data-kind="user"] { color: var(--primary); }
+.chat__log [data-kind="tool"] { color: var(--warn); }
+/* Reset inner-paragraph spacing inside Markdown blocks so multiple
+   paragraphs don't double up with the .chat__line margin. */
+.chat__log [data-kind="assistant"] > p:last-child,
+.chat__log [data-kind="tool"] > p:last-child { margin-bottom: 0; }
 .chat__form {
   display: flex;
   gap: 0.5rem;
