@@ -12,6 +12,7 @@ import { Viewport } from "../components/Viewport";
 import { Consent } from "../components/Consent";
 import { BlessGate } from "../components/BlessGate";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { Header } from "../components/Header";
 import { openBridge } from "../lib/bridge";
 import {
   createRegistration,
@@ -48,6 +49,10 @@ export function Session() {
   const [driving, setDriving] = useState(false);
   const [browser, setBrowser] = useState<BrowserState>("missing");
   const [busy, setBusy] = useState(false);
+  const [navBusy, setNavBusy] = useState(false);
+  const [navError, setNavError] = useState<string | undefined>(undefined);
+  // Incremented after a successful navigate_to so Header resets its input.
+  const [navKey, setNavKey] = useState(0);
   const [consented, setConsented] = useState<Set<string>>(new Set());
   const [bless, setBless] = useState<BlessRequest | null>(null);
   const blessWait = useRef<((ok: boolean) => void) | null>(null);
@@ -244,12 +249,35 @@ export function Session() {
 
   return (
     <div className="shell">
+      <div className="shell__top">
+        <Header
+          placeholder="https://example.com"
+          submitLabel="Navigate"
+          disabled={navBusy}
+          error={navError}
+          successKey={navKey}
+          onSubmit={async (url) => {
+            setNavError(undefined);
+            setNavBusy(true);
+            try {
+              await bridgeRef.current?.exec("navigate_to", { origin: url });
+              setNavKey((k) => k + 1);
+            } catch (err) {
+              setNavError(
+                err instanceof Error ? err.message : "navigation failed",
+              );
+            } finally {
+              setNavBusy(false);
+            }
+          }}
+        />
+        <ThemeToggle />
+      </div>
       <ChatPanel
         tools={tools}
         audit={audit}
         lines={lines}
         busy={busy}
-        headerRight={<ThemeToggle />}
         onSend={(text) => {
           setBusy(true);
           setLines((l) => [...l, { kind: "user", text }]);

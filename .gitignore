@@ -19,3 +19,7 @@ HACKATHON_STRATEGY.md
 
 # Sprint tracking; not part of the submission.
 SPRINT.md
+
+# SDD plan scratch: ledger, briefs, reports, review packages. Lives inside
+# the worktree but is never part of the branch.
+.superpowers/sdd/

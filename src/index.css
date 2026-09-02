@@ -102,6 +102,32 @@ input {
   text-transform: uppercase;
 }
 
+.header {
+  width: 100%;
+}
+.header__form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+.header__input {
+  flex: 1;
+  min-width: 0;
+}
+.header__submit {
+  flex: 0 0 auto;
+  padding-inline: 1.2rem;
+}
+.header__error {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin: 0.45rem 0 0;
+  padding-inline: 1rem;
+}
+@media (max-width: 520px) {
+  .header__form { flex-direction: column; }
+}
+
 .home {
   max-width: 52rem;
   margin: 0 auto;
@@ -121,7 +147,7 @@ input {
   font-size: 0.72rem;
 }
 .lede { font-size: 1.15rem; max-width: 36rem; }
-.home__go { margin-top: 1.6rem; }
+.home__start { margin-top: 1.6rem; }
 
 .use-cases {
   display: grid;
@@ -152,9 +178,20 @@ input {
 .shell {
   display: grid;
   grid-template-columns: minmax(280px, 34%) 1fr;
+  grid-template-rows: auto 1fr;
   height: 100%;
   min-height: 100dvh;
 }
+.shell__top {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.8rem 1.2rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.shell__top .header { flex: 1; min-width: 0; }
 .shell__right {
   display: flex;
   flex-direction: column;
@@ -168,16 +205,6 @@ input {
   background: var(--panel);
   min-width: 0;
 }
-.chat__bar {
-  padding: 1.1rem 1.2rem 0.6rem;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  justify-content: space-between;
-  gap: 0.8rem;
-  align-items: flex-start;
-}
-.chat__bar h1 { font-size: 1.8rem; }
-.chat__bar p { color: var(--muted); margin: 0.2rem 0 0; font-size: 0.75rem; }
 .chat__tools {
   list-style: none;
   margin: 0;

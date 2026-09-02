@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { AuditRow, ToolSchema } from "../../shared/protocol";
 
@@ -13,11 +12,10 @@ type Props = {
   audit: AuditRow[];
   lines: Line[];
   busy: boolean;
-  headerRight?: ReactNode;
   onSend: (text: string) => void;
 };
 
-export function ChatPanel({ tools, audit, lines, busy, headerRight, onSend }: Props) {
+export function ChatPanel({ tools, audit, lines, busy, onSend }: Props) {
   const [draft, setDraft] = useState("");
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -27,13 +25,6 @@ export function ChatPanel({ tools, audit, lines, busy, headerRight, onSend }: Pr
 
   return (
     <section className="chat" aria-label="Agent">
-      <header className="chat__bar">
-        <div>
-          <h1>mcpmatic</h1>
-          <p>getTools / executeTool · native Shopify when present</p>
-        </div>
-        {headerRight}
-      </header>
       <ul className="chat__tools">
         {tools.length === 0 ? (
           <li className="muted">no tools registered — check the log</li>
