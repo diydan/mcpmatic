@@ -24,7 +24,11 @@ export function Header({
 }: Props) {
   const [value, setValue] = useState("");
   const inputId = useId();
-  const isDisabled = !!disabled || !value.trim();
+  // The submit button alone reflects "is there something to submit?".
+  // The input stays editable even when empty so the user can type into
+  // it — disabling the input while empty makes it unfocusable.
+  const inputDisabled = !!disabled;
+  const submitDisabled = !!disabled || !value.trim();
 
   useEffect(() => {
     setValue("");
@@ -53,9 +57,13 @@ export function Header({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={placeholder}
-          disabled={isDisabled}
+          disabled={inputDisabled}
         />
-        <button type="submit" className="primary header__submit" disabled={isDisabled}>
+        <button
+          type="submit"
+          className="primary header__submit"
+          disabled={submitDisabled}
+        >
           {submitLabel}
         </button>
       </form>
