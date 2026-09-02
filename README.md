@@ -48,6 +48,14 @@ session page. That is this.
 | [brooklinen.com](https://www.brooklinen.com) | Shopify native | same pack, `_on_brooklinen_com` |
 | [kayak.com](https://www.kayak.com) | Synthesised | `search_flights_on_kayak_com` |
 
+The hosted UI's header accepts any URL, not just these three. On the home
+page it initializes a session pre-granted for the chosen origin by POSTing
+`{ origin }` to `/sessions`; on the session page the same input drives the
+existing `navigate_to` tool to point the live browser at any URL. The server
+is the policy layer — URL parse, `https:` protocol, and the fail-closed
+`isPrivateUrl` SSRF guard run on every accept, and the client does no
+validation of its own.
+
 ## Architecture
 
 ```
