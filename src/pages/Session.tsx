@@ -86,6 +86,47 @@ export function Session() {
     [refreshTools],
   );
 
+  // Hydrate any pre-seeded consent (origin passed to POST /sessions) on
+  // mount. Without this, the Consent panel would show nothing granted
+  // and the WebMCP registration was created with an empty consented set,
+  // so tools for the seeded origin wouldn't appear until the user
+  // manually re-grants. Runs after the main setup effect so
+  // registrationRef is populated; the brief window between mount and
+  // fetch is harmless because the user can't trigger a tool call that
+  // fast.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let seeded: string[] = [];
+      try {
+        const res = await fetch(`/s/${sessionToken}/consent`);
+        if (res.ok) {
+          const body = (await res.json()) as { consent?: unknown };
+          if (Array.isArray(body.consent)) {
+            seeded = body.consent.filter((x): x is string => typeof x === "string");
+          }
+        }
+      } catch {
+        return; // network error: user can grant manually
+      }
+      if (cancelled || seeded.length === 0) return;
+      const next = new Set(seeded);
+      setConsented(next);
+      const reg = registrationRef.current;
+      if (reg) await syncTools(reg, next);
+      setLines((l) => [
+        ...l,
+        {
+          kind: "system",
+          text: `pre-granted ${seeded.join(", ")} from session create`,
+        },
+      ]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionToken, syncTools]);
+
   useEffect(() => {
     seedIfEmpty();
     const mc = ensureModelContext();
