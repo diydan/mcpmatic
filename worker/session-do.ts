@@ -30,7 +30,12 @@ import {
 } from "./agent";
 import { MANIFESTS, manifestFor, originOfTool } from "./manifests";
 import { buildToolList } from "./mcp/tools";
-import { callNativeTool, type EvaluateFn } from "./native-webmcp";
+import {
+  callNativeTool,
+  discoverNativeTools,
+  type DiscoverFn,
+  type EvaluateFn,
+} from "./native-webmcp";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
@@ -50,7 +55,7 @@ type LiveBrowser = {
     click?: (selector: string) => Promise<void>;
     press?: (selector: string, key: string) => Promise<void>;
     waitForSelector?: (selector: string) => Promise<unknown>;
-    evaluate?: EvaluateFn;
+    evaluate?: EvaluateFn & DiscoverFn;
     context: () => {
       newCDPSession: (page: unknown) => Promise<CdpSession>;
     };
@@ -451,6 +456,40 @@ export class SessionDO extends DurableObject<Env> {
       }
       this.setCurrentOrigin(originFromUrl(url));
       return { ok: true, text: `URL: ${url}\nTitle: ${title}\n\n${body}` };
+    }
+    if (name === "list_remote_tools") {
+      // Reports on the page that is open; never starts a browser, same rule as
+      // get_page_state.
+      const live = this.live;
+      if (!live) {
+        return { ok: true, text: "No remote page open yet. Grant an origin first." };
+      }
+      if (!live.page.evaluate) {
+        return { ok: false, text: "cannot inspect the remote page" };
+      }
+      const url = live.page.url();
+      const found = await discoverNativeTools(
+        live.page.evaluate.bind(live.page) as DiscoverFn,
+      );
+      if (!found.ok) {
+        return {
+          ok: true,
+          text:
+            found.reason === "threw"
+              ? `Could not read tools on ${url}: ${found.error ?? "unknown error"}`
+              : `${url} exposes no WebMCP tools. A tool for this origin would have to be synthesised.`,
+        };
+      }
+      const tools = found.tools ?? [];
+      if (tools.length === 0) {
+        return { ok: true, text: `${url} has WebMCP but registered no tools.` };
+      }
+      return {
+        ok: true,
+        text:
+          `${url} exposes ${tools.length} WebMCP tool${tools.length === 1 ? "" : "s"} of its own:\n` +
+          tools.map((t) => `- ${t.name}: ${t.description}`).join("\n"),
+      };
     }
     if (name === "navigate_to") {
       const target = String(args.origin ?? args.url ?? "");

@@ -94,3 +94,70 @@ async function nativeCall(payload: {
       .__mcpmaticPolyfilledWebMCP,
   };
 }
+
+
+export type DiscoveredTool = { name: string; description: string };
+export type DiscoveryOutcome = {
+  ok: boolean;
+  tools?: DiscoveredTool[];
+  reason?: "no-webmcp" | "threw";
+  error?: string;
+};
+
+export type DiscoverFn = (
+  fn: () => Promise<DiscoveryOutcome>,
+) => Promise<DiscoveryOutcome>;
+
+/**
+ * List the WebMCP tools the *remote* page exposes, without calling any of them.
+ *
+ * Read-only on purpose. It is how a session can say "this site exposes ten
+ * tools" for an origin we hold no manifest for — the observed half of what the
+ * registry does offline.
+ */
+export async function discoverNativeTools(
+  discover: DiscoverFn,
+): Promise<DiscoveryOutcome> {
+  try {
+    return await discover(nativeList);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "threw",
+      error: err instanceof Error ? err.message : "evaluate failed",
+    };
+  }
+}
+
+/** Serialized into the remote page. Do not close over worker state. */
+async function nativeList(): Promise<DiscoveryOutcome> {
+  type Mc = { getTools: () => Promise<Array<{ name: string; description?: string }>> };
+  const read = (): Mc | undefined =>
+    (globalThis as { document?: { modelContext?: Mc } }).document?.modelContext;
+
+  const deadline = Date.now() + 8000;
+  let mc = read();
+  while (typeof mc?.getTools !== "function" && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 200));
+    mc = read();
+  }
+  if (typeof mc?.getTools !== "function") return { ok: false, reason: "no-webmcp" };
+
+  const raw = await mc.getTools();
+  // A remote description is text we did not write, on its way into somebody
+  // else's model context. Cap it and strip control characters before it
+  // travels any further. This is the cheap half of the screening the registry
+  // spec calls for; it is not a substitute for it.
+  const clean = (v: unknown) =>
+    String(v ?? "")
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .slice(0, 200);
+  return {
+    ok: true,
+    tools: raw.slice(0, 40).map((t) => ({
+      name: clean(t.name),
+      description: clean(t.description),
+    })),
+  };
+}

@@ -71,6 +71,7 @@ describe("incremental registration", () => {
     expect(report.registered.sort()).toEqual([
       "get_page_state",
       "list_available_origins",
+      "list_remote_tools",
       "navigate_to",
     ]);
   });

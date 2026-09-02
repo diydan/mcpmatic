@@ -220,8 +220,17 @@ export function Session() {
     if (MANIFESTS.some((m) => m.origin === origin)) return;
     try {
       const mc = ensureModelContext();
-      const tool = (await mc.getTools()).find((t) => t.name === "navigate_to");
-      if (tool) await mc.executeTool(tool, { origin });
+      const listed = await mc.getTools();
+      const nav = listed.find((t) => t.name === "navigate_to");
+      if (nav) await mc.executeTool(nav, { origin });
+      // Then say what the site brings of its own. For an origin we hold no
+      // manifest for this is the only honest answer to "what can it do?", and
+      // for a WebMCP site it is the whole point.
+      const discover = listed.find((t) => t.name === "list_remote_tools");
+      if (discover) {
+        const found = await mc.executeTool(discover, {});
+        setLines((l) => [...l, { kind: "tool", text: String(found) }]);
+      }
     } catch (err) {
       setLines((l) => [
         ...l,

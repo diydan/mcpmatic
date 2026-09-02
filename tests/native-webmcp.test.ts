@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { callNativeTool } from "../worker/native-webmcp";
+import { callNativeTool, discoverNativeTools } from "../worker/native-webmcp";
 
 describe("callNativeTool", () => {
   it("reports the remote tool's own failure, not absence", async () => {
@@ -55,5 +55,34 @@ describe("callNativeTool", () => {
       { query: "wool" },
     );
     expect(out).toEqual({ used: true, text: "3 results" });
+  });
+});
+
+describe("discoverNativeTools", () => {
+  it("returns the remote page's own tool list", async () => {
+    const out = await discoverNativeTools(async () => ({
+      ok: true,
+      tools: [
+        { name: "search_catalog", description: "Search the store catalog." },
+        { name: "update_cart", description: "Add or change cart lines." },
+      ],
+    }));
+    expect(out.ok).toBe(true);
+    expect(out.tools?.map((t) => t.name)).toEqual(["search_catalog", "update_cart"]);
+  });
+
+  it("reports a site with no WebMCP as a reason, not an error", async () => {
+    const out = await discoverNativeTools(async () => ({
+      ok: false,
+      reason: "no-webmcp" as const,
+    }));
+    expect(out).toEqual({ ok: false, reason: "no-webmcp" });
+  });
+
+  it("turns an evaluate failure into a reason rather than throwing", async () => {
+    const out = await discoverNativeTools(async () => {
+      throw new Error("Execution context was destroyed");
+    });
+    expect(out).toMatchObject({ ok: false, reason: "threw" });
   });
 });

@@ -64,6 +64,13 @@ const SPINE: ToolSpec[] = [
     origin: null,
   },
   {
+    name: "list_remote_tools",
+    description:
+      "List the WebMCP tools the site currently open in the remote browser exposes of its own. Read-only; calls none of them.",
+    inputSchema: { ...EMPTY_INPUT },
+    origin: null,
+  },
+  {
     name: "navigate_to",
     description:
       "Navigate the remote browser to an https origin the user has granted.",
