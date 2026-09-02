@@ -167,6 +167,15 @@ export class SessionDO extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Public read of the consent list. Used by the GET /s/<token>/consent
+   * route so the Session page can hydrate its `consented` state on mount
+   * when an origin was pre-seeded via POST /sessions. Idempotent.
+   */
+  async listConsent(): Promise<{ consent: string[] }> {
+    return { consent: this.readConsent() };
+  }
+
   async grantConsent(origin: string): Promise<{ ok: true }> {
     const allowed = this.readConsent();
     if (!allowed.includes(origin)) {

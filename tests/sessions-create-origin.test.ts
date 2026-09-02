@@ -165,19 +165,77 @@ describe("POST /sessions — origin seed (happy path)", () => {
     expect(vi.mocked(isPrivateUrl)).toHaveBeenCalledTimes(1);
   });
 
-  it("valid https origin with path/query is forwarded as-given", async () => {
+  it("valid https origin with path/query is normalized to origin only (path/query stripped)", async () => {
     const { env, initSession } = makeEnv();
-    const origin = "https://example.com/some/path?q=1";
     const res = await worker.fetch!(
       req("https://worker.local/sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ origin }),
+        body: JSON.stringify({ origin: "https://example.com/some/path?q=1" }),
       }),
       env,
     );
     expect(res.status).toBe(200);
-    expect(initSession).toHaveBeenCalledWith(expect.any(String), origin);
+    // Path/query stripped: seeded consent matches the bare origin so
+    // subsequent tool calls (e.g. navigate_to with origin="https://example.com")
+    // match without needing a re-grant.
+    expect(initSession).toHaveBeenCalledWith(
+      expect.any(String),
+      "https://example.com",
+    );
+  });
+
+  it("bare host (no protocol) auto-prepends https://", async () => {
+    const { env, initSession } = makeEnv();
+    const res = await worker.fetch!(
+      req("https://worker.local/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ origin: "example.com" }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(initSession).toHaveBeenCalledWith(
+      expect.any(String),
+      "https://example.com",
+    );
+  });
+
+  it("bare host with www. auto-prepends https:// (www preserved)", async () => {
+    const { env, initSession } = makeEnv();
+    const res = await worker.fetch!(
+      req("https://worker.local/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ origin: "www.example.com" }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    // www. is preserved — it's part of the hostname, distinct from
+    // the bare origin in URL semantics.
+    expect(initSession).toHaveBeenCalledWith(
+      expect.any(String),
+      "https://www.example.com",
+    );
+  });
+
+  it("bare host with path auto-prepends https:// and strips path", async () => {
+    const { env, initSession } = makeEnv();
+    const res = await worker.fetch!(
+      req("https://worker.local/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ origin: "example.com/products/x" }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(initSession).toHaveBeenCalledWith(
+      expect.any(String),
+      "https://example.com",
+    );
   });
 });
 
@@ -202,8 +260,13 @@ describe("POST /sessions — origin validation failures", () => {
     expect(vi.mocked(isPrivateUrl)).not.toHaveBeenCalled();
   });
 
-  it("origin that fails URL.parse → 400 invalid origin", async () => {
+  it("origin that fails URL.parse AND fails auto-prepend parse → 400 invalid origin", async () => {
     const { env, initSession } = makeEnv();
+    // "not-a-url" → new URL("not-a-url") throws → tries
+    // new URL("https://not-a-url") → succeeds syntactically → SSRF guard
+    // would normally reject via DNS NXDOMAIN. Mock the SSRF guard to
+    // simulate that rejection here so the test stays deterministic.
+    vi.mocked(isPrivateUrl).mockResolvedValueOnce(true);
     const res = await worker.fetch!(
       req("https://worker.local/sessions", {
         method: "POST",
@@ -216,6 +279,7 @@ describe("POST /sessions — origin validation failures", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("invalid origin");
     expect(initSession).not.toHaveBeenCalled();
+    expect(vi.mocked(isPrivateUrl)).toHaveBeenCalledTimes(1);
   });
 
   it("origin that is a non-https scheme (file:) → 400 invalid origin", async () => {
@@ -383,12 +447,16 @@ describe("POST /sessions — invalid JSON body", () => {
 
 describe("POST /sessions — error response shape", () => {
   it("400 responses do NOT carry the OAuth-only Cache-Control: no-store header", async () => {
+    // Use an input that the SSRF guard rejects — "https://127.0.0.1"
+    // is a private IP literal, so isPrivateUrl returns true. After
+    // lenient parsing this is a clean rejection.
+    vi.mocked(isPrivateUrl).mockResolvedValueOnce(true);
     const { env } = makeEnv();
     const res = await worker.fetch!(
       req("https://worker.local/sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ origin: "not-a-url" }),
+        body: JSON.stringify({ origin: "https://127.0.0.1" }),
       }),
       env,
     );

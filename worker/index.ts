@@ -24,6 +24,10 @@ export default {
     }
 
     const consentMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/consent$/);
+    if (consentMatch && request.method === "GET") {
+      const stub = env.SESSION.getByName(consentMatch[1]);
+      return json(await stub.listConsent());
+    }
     if (consentMatch && request.method === "POST") {
       const body = (await request.json()) as { origin?: unknown };
       const origin = typeof body.origin === "string" ? body.origin : "";
@@ -151,11 +155,20 @@ async function parseAndValidateOrigin(
   if (typeof raw !== "string") {
     return json({ error: "invalid origin" }, 400);
   }
+  // Lenient parsing: if the input has no scheme, treat it as https://.
+  // Users often type "example.com" or "www.example.com" without the
+  // protocol; auto-prepending matches user expectation. `www.` is left
+  // in place — it's a distinct origin in URL semantics, and the consent
+  // list keys on it.
   let parsed: URL;
   try {
     parsed = new URL(raw);
   } catch {
-    return json({ error: "invalid origin" }, 400);
+    try {
+      parsed = new URL(`https://${raw}`);
+    } catch {
+      return json({ error: "invalid origin" }, 400);
+    }
   }
   // Same protocol rule as the existing /s/<token>/consent endpoint: the
   // remote browser is reached over https only. isPrivateUrl will also
@@ -164,15 +177,19 @@ async function parseAndValidateOrigin(
   if (parsed.protocol !== "https:") {
     return json({ error: "invalid origin" }, 400);
   }
+  // Normalize to canonical origin (scheme + host + port) so the seeded
+  // consent matches what /s/<token>/consent expects and what subsequent
+  // tool calls (e.g. navigate_to) will check against. Drops path/query.
+  const normalized = parsed.origin;
   // SSRF guard: fail-closed on private IP literals, on resolver errors,
   // and on any resolved A/AAAA record pointing at private space. See
   // worker/is-private-url.ts for the threat model and tests/ssrf.test.ts
   // for the guard's own coverage.
-  const blocked = await isPrivateUrl(raw, makeResolve4());
+  const blocked = await isPrivateUrl(normalized, makeResolve4());
   if (blocked) {
     return json({ error: "invalid origin" }, 400);
   }
-  return raw;
+  return normalized;
 }
 
 function json(data: unknown, status = 200): Response {
