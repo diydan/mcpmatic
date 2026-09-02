@@ -71,6 +71,15 @@ describe("discoverNativeTools", () => {
     expect(out.tools?.map((t) => t.name)).toEqual(["search_catalog", "update_cart"]);
   });
 
+  it("distinguishes an empty list from a missing implementation", async () => {
+    // We inject modelContext, so it is always present; an empty tool list is a
+    // real answer about the site, not evidence that WebMCP is absent.
+    const out = await discoverNativeTools(async () => ({ ok: true, tools: [] }));
+    expect(out.ok).toBe(true);
+    expect(out.tools).toEqual([]);
+    expect(out.reason).toBeUndefined();
+  });
+
   it("reports a site with no WebMCP as a reason, not an error", async () => {
     const out = await discoverNativeTools(async () => ({
       ok: false,

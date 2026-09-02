@@ -482,12 +482,20 @@ export class SessionDO extends DurableObject<Env> {
       }
       const tools = found.tools ?? [];
       if (tools.length === 0) {
-        return { ok: true, text: `${url} has WebMCP but registered no tools.` };
+        // modelContext is always present because we install it, so an empty
+        // list means the site registered nothing -- not that WebMCP is absent.
+        return {
+          ok: true,
+          text: `${url} registered no WebMCP tools of its own. A tool for this origin would have to be synthesised.`,
+        };
       }
+      const how = found.polyfilled
+        ? " (WebMCP supplied by this session; the tools are the site's own)"
+        : "";
       return {
         ok: true,
         text:
-          `${url} exposes ${tools.length} WebMCP tool${tools.length === 1 ? "" : "s"} of its own:\n` +
+          `${url} exposes ${tools.length} WebMCP tool${tools.length === 1 ? "" : "s"} of its own${how}:\n` +
           tools.map((t) => `- ${t.name}: ${t.description}`).join("\n"),
       };
     }

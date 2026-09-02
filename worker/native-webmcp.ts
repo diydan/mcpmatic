@@ -102,6 +102,8 @@ export type DiscoveryOutcome = {
   tools?: DiscoveredTool[];
   reason?: "no-webmcp" | "threw";
   error?: string;
+  /** True when the API was supplied by this session rather than the browser. */
+  polyfilled?: boolean;
 };
 
 export type DiscoverFn = (
@@ -135,15 +137,23 @@ async function nativeList(): Promise<DiscoveryOutcome> {
   const read = (): Mc | undefined =>
     (globalThis as { document?: { modelContext?: Mc } }).document?.modelContext;
 
+  // We inject the API ourselves, so `modelContext` exists from the first tick
+  // and its presence says nothing about whether the site has registered yet.
+  // Wait for a tool to actually appear; an empty list after the deadline is a
+  // real answer, not a timing artefact.
   const deadline = Date.now() + 8000;
   let mc = read();
-  while (typeof mc?.getTools !== "function" && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 200));
+  let raw: Array<{ name: string; description?: string }> = [];
+  for (;;) {
     mc = read();
+    if (typeof mc?.getTools === "function") {
+      raw = await mc.getTools();
+      if (raw.length > 0) break;
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 250));
   }
   if (typeof mc?.getTools !== "function") return { ok: false, reason: "no-webmcp" };
-
-  const raw = await mc.getTools();
   // A remote description is text we did not write, on its way into somebody
   // else's model context. Cap it and strip control characters before it
   // travels any further. This is the cheap half of the screening the registry
@@ -155,6 +165,8 @@ async function nativeList(): Promise<DiscoveryOutcome> {
       .slice(0, 200);
   return {
     ok: true,
+    polyfilled: !!(globalThis as { __mcpmaticPolyfilledWebMCP?: boolean })
+      .__mcpmaticPolyfilledWebMCP,
     tools: raw.slice(0, 40).map((t) => ({
       name: clean(t.name),
       description: clean(t.description),
