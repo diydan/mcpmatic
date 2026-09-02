@@ -143,11 +143,18 @@ try {
     await home.goto(`${BASE}/`, { waitUntil: "networkidle" });
     await home.locator(".header__input").fill(input);
     await home.locator(".header__submit").click();
-    // Wait for the error to appear (or the nav to happen)
-    await home.waitForLoadState("networkidle").catch(() => {});
+    // Wait for the error <p> to become visible (React state propagation
+    // lands after the fetch resolves, which may be after networkidle).
     const errEl = home.locator(".header__error");
-    const visible = await errEl.isVisible().catch(() => false);
-    const text = visible ? (await errEl.innerText()).toLowerCase() : "";
+    let visible = false;
+    let text = "";
+    try {
+      await errEl.waitFor({ state: "visible", timeout: 5000 });
+      visible = true;
+      text = (await errEl.innerText()).toLowerCase();
+    } catch {
+      visible = false;
+    }
     check(
       `Home: "${input}" → "${expected}" inline`,
       visible && text.includes(expected),
@@ -168,6 +175,51 @@ try {
     "Home: leading/trailing whitespace trimmed → navigates",
     /\/s\/[a-f0-9]{64}$/.test(home.url()),
   );
+
+  // ----- Lenient URL parsing (auto-prepend https://) -----
+  console.log("\n# Home: lenient URL parsing");
+  for (const bare of ["example.com", "www.example.com"]) {
+    await home.goto(`${BASE}/`, { waitUntil: "networkidle" });
+    await home.locator(".header__input").fill(bare);
+    await Promise.all([
+      home.waitForURL(/\/s\/[a-f0-9]{64}$/, { timeout: 10_000 }),
+      home.locator(".header__submit").click(),
+    ]);
+    check(
+      `Home: "${bare}" accepted and lands on /s/<token>`,
+      /\/s\/[a-f0-9]{64}$/.test(home.url()),
+      home.url(),
+    );
+    await shot(home, `06-home-lenient-${bare.replace(/\./g, "_")}`);
+  }
+
+  // ----- Session page reflects pre-seeded consent -----
+  // After typing "example.com" the consent list must contain
+  // "https://example.com" on the Session page (the grace note from
+  // GET /s/<token>/consent hydration).
+  console.log("\n# Session: seeded consent visible");
+  await home.goto(`${BASE}/`, { waitUntil: "networkidle" });
+  await home.locator(".header__input").fill("example.com");
+  await Promise.all([
+    home.waitForURL(/\/s\/[a-f0-9]{64}$/, { timeout: 10_000 }),
+    home.locator(".header__submit").click(),
+  ]);
+  // Look for the system line the hydration effect posts.
+  const consentNote = home.locator(".chat__log p").filter({
+    hasText: /pre-granted https:\/\/example\.com from session create/,
+  });
+  let consentVisible = false;
+  try {
+    await consentNote.first().waitFor({ state: "visible", timeout: 5000 });
+    consentVisible = true;
+  } catch {
+    consentVisible = false;
+  }
+  check(
+    'Session: "pre-granted https://example.com from session create" line visible',
+    consentVisible,
+  );
+  await shot(home, "07-session-seeded-consent");
 
   // ----- Responsive: narrow viewport stacks form vertically -----
   console.log("\n# Responsive");
