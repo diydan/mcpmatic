@@ -1,6 +1,8 @@
 # Session as account — design
 
-**Status:** proposed, not yet planned or implemented. No code has been written.
+**Status:** Phases A–C are implemented (see §Phasing, which records where the
+build departed from this text). This document is the design record; the header
+below was written before any of it existed.
 
 **Verified against `625a642`.** This repository moved four times while the spec
 was being written (`74025f8` → `86afdcb` → `625a642`), and the intermediate
@@ -54,8 +56,10 @@ table keyed by a 64-hex token with a two-hour TTL (`session-do.ts:45`,
 longer than one afternoon.
 
 Sprint item P1.3 (consent hydration) is partly addressed already — the `state`
-message now carries `consented` (`shared/protocol.ts:98`, sent at
-`session-do.ts:501`), so a reload re-seeds from the DO. That fixes the
+message now carries `consented` (`shared/protocol.ts:111`, sent by `sendState`
+at `session-do.ts:966`; the connect-time state at `:358` omits it, and the
+page also hydrates from `GET /s/<token>/consent` on mount), so a reload
+re-seeds from the DO. That fixes the
 reload; it does not make consent outlive the session. The durability gap is
 what remains, and it is the part the product claim rests on.
 
