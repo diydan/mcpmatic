@@ -32,6 +32,19 @@ const SPINE: McpToolDescriptor[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "check_approval",
+    description:
+      "Collect the result of a tool call that returned approval-pending. Pass the id from that reply.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The id from an approval-pending reply" },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 export const SPINE_NAMES = SPINE.map((t) => t.name);

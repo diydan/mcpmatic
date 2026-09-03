@@ -141,3 +141,18 @@ describe("approval-required tools are labelled", () => {
     expect(search?.description).not.toContain(APPROVAL_NOTE);
   });
 });
+
+describe("check_approval is on the surface", () => {
+  it("is a spine tool, so a pending approval can be collected", async () => {
+    // requestBounded hands back an id rather than holding the caller open.
+    // Without a tool to redeem it, that id is useless.
+    const list = await buildToolList(new Set());
+    const check = list.find((t) => t.name === "check_approval");
+    expect(check).toBeDefined();
+    expect(check?.inputSchema.required).toEqual(["id"]);
+  });
+
+  it("is always present, like the rest of the spine", async () => {
+    expect(SPINE_NAMES).toContain("check_approval");
+  });
+});

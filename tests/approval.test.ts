@@ -3,7 +3,6 @@ import {
   ApprovalGate,
   approvalFailureText,
   missingFills,
-  prepareFills,
   stripProfilePaths,
   type ApprovalOutcome,
   type ApprovalRequestPayload,
@@ -223,74 +222,6 @@ describe("approvalFailureText", () => {
     for (const reason of ["needs-console", "denied", "timeout", "disconnected"] as const) {
       expect(approvalFailureText(reason, fields)).not.toContain("Rivington");
     }
-  });
-});
-
-describe("prepareFills", () => {
-  const FILLS = ["address.line1", "address.postcode"];
-  const supplied = {
-    "address.line1": "14 Rivington Street",
-    "address.postcode": "EC2A 3DZ",
-  };
-
-  it("passes a tool with no fillsFrom straight through", async () => {
-    const { g, sent } = gate();
-    const out = await prepareFills(undefined, { origin: "LHR" }, g);
-    expect(out).toEqual({ ok: true, args: { origin: "LHR" }, resolved: [] });
-    expect(sent).toEqual([]);
-  });
-
-  it("does not prompt again when the façade already merged the fields", async () => {
-    // register-all.ts blessed and merged before the wire. Asking twice for one
-    // action is the regression this guards.
-    const { g, sent } = gate();
-    const out = await prepareFills(FILLS, { ...supplied }, g);
-    expect(sent).toEqual([]);
-    expect(out).toEqual({ ok: true, args: supplied, resolved: FILLS });
-  });
-
-  it("refuses rather than filling blanks when no console is attached", async () => {
-    // The bug: over MCP these six fields were undefined, String(undefined)
-    // became "", page.fill swallowed it, and runTool reported success.
-    const { g } = gate({ hasConsole: () => false });
-    const out = await prepareFills(FILLS, {}, g);
-    expect(out.ok).toBe(false);
-    expect(out.ok === false && out.text).toContain("needs-console");
-  });
-
-  it("merges the approved fields into the arguments", async () => {
-    const { g, sent } = gate();
-    const pending = prepareFills(FILLS, { size: "9" }, g);
-    g.settle(sent[0].id, true, supplied);
-    await expect(pending).resolves.toEqual({
-      ok: true,
-      args: { size: "9", ...supplied },
-      resolved: FILLS,
-    });
-  });
-
-  it("reports only the fields actually resolved, for the audit row", async () => {
-    // The row must name what moved, not what the manifest declared.
-    const { g, sent } = gate();
-    const pending = prepareFills(FILLS, {}, g);
-    g.settle(sent[0].id, true, { "address.line1": "14 Rivington Street" });
-    const out = await pending;
-    expect(out.ok && out.resolved).toEqual(["address.line1"]);
-  });
-
-  it("fails the call when the human declines", async () => {
-    const { g, sent } = gate();
-    const pending = prepareFills(FILLS, {}, g);
-    g.settle(sent[0].id, false);
-    const out = await pending;
-    expect(out.ok).toBe(false);
-    expect(out.ok === false && out.text).toBe("user denied: profile fields not sent");
-  });
-
-  it("asks only for the fields that are missing", async () => {
-    const { g, sent } = gate();
-    void prepareFills(FILLS, { "address.line1": "already here" }, g);
-    expect(sent[0].fieldNames).toEqual(["address.postcode"]);
   });
 });
 

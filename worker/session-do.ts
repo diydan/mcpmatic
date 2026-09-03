@@ -30,6 +30,7 @@ import {
   type ChatTurn,
 } from "./agent";
 import { MANIFESTS, manifestFor } from "./manifests";
+import type { ToolManifest } from "../shared/manifest";
 import { mergeAutonomousConsent } from "../shared/autonomous";
 import { buildToolList } from "./mcp/tools";
 import {
@@ -43,7 +44,8 @@ import type { DiscoveredTool } from "../shared/protocol";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
 import {
   ApprovalGate,
-  prepareFills,
+  approvalFailureText,
+  missingFills,
   stripProfilePaths,
 } from "./approval";
 import { parseBridgeRole } from "./bridge-role";
@@ -56,6 +58,25 @@ const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
  * approval surfaces as our error rather than the client's own abandonment.
  */
 const APPROVAL_TIMEOUT_MS = 45_000;
+/**
+ * How long a tool call waits inline before handing back an id.
+ *
+ * Long enough for a human who is already watching the console, short enough
+ * that the caller keeps most of its budget and spends little time exposed to a
+ * Durable Object reset. See ApprovalGate.requestBounded.
+ */
+const INLINE_APPROVAL_MS = 10_000;
+
+/**
+ * What a tool call answers with. `resolved` names the profile fields that
+ * actually moved; `reason` is the failure class site telemetry records.
+ */
+type ToolResult = {
+  ok: boolean;
+  text: string;
+  resolved?: string[];
+  reason?: string;
+};
 /** Grace after the last client disconnects before the browser is released. */
 const IDLE_GRACE_MS = 3 * 60 * 1000;
 const VIEWPORT = { width: 1280, height: 720 };
@@ -111,6 +132,14 @@ export class SessionDO extends DurableObject<Env> {
       this.ctx.storage.sql.exec(AUDIT_DDL);
       this.ctx.storage.sql.exec(
         `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+      );
+      this.ctx.storage.sql.exec(
+        `CREATE TABLE IF NOT EXISTS approval_results (
+           id TEXT PRIMARY KEY,
+           ok INTEGER NOT NULL,
+           text TEXT NOT NULL,
+           ts INTEGER NOT NULL
+         )`,
       );
       this.ctx.setWebSocketAutoResponse(
         new WebSocketRequestResponsePair("ping", "pong"),
@@ -219,6 +248,34 @@ export class SessionDO extends DurableObject<Env> {
       throw new Error("session expired");
     }
     return { consent: this.readConsent(), autonomous: this.readAutonomous() };
+  }
+
+  /**
+   * Results of calls approved after their caller gave up, keyed by approval
+   * id and read back by check_approval.
+   *
+   * Result text only. A tool result names what ran and where; it never carries
+   * a profile value, and there is nowhere here to put one if it did.
+   */
+  private storeApprovalResult(id: string, result: ToolResult): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO approval_results (id, ok, text, ts) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET ok = excluded.ok, text = excluded.text`,
+      id,
+      result.ok ? 1 : 0,
+      result.text,
+      Date.now(),
+    );
+  }
+
+  private readApprovalResult(id: string): ToolResult | null {
+    const row = this.ctx.storage.sql
+      .exec<{ ok: number; text: string }>(
+        `SELECT ok, text FROM approval_results WHERE id = ? LIMIT 1`,
+        id,
+      )
+      .toArray()[0];
+    return row ? { ok: row.ok === 1, text: row.text } : null;
   }
 
   private accountId(): string | null {
@@ -852,6 +909,19 @@ export class SessionDO extends DurableObject<Env> {
       return { ok: true, text: `navigated to ${live.page.url()}` };
     }
 
+    if (name === "check_approval") {
+      const id = String(args.id ?? "");
+      const stored = this.readApprovalResult(id);
+      if (stored) return stored;
+      // No result yet is not the same as no such approval, but from here they
+      // look alike: an id we never issued and one still waiting both have
+      // nothing filed. Say what the caller can act on.
+      return {
+        ok: false,
+        text: `approval ${id || "(none given)"} has no result yet — it is still waiting, or it expired.`,
+      };
+    }
+
     const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
     if (!manifest) return { ok: false, text: `unknown tool ${name}` };
     if (!(await this.allowOrigin(manifest.origin))) {
@@ -860,12 +930,82 @@ export class SessionDO extends DurableObject<Env> {
     // Ask before driving anything. A call nobody can approve should not cost a
     // Chromium launch, and a tool that cannot fill must say so rather than
     // filling blanks and reporting success.
-    const prepared = await prepareFills(manifest.fillsFrom, args, this.approvals, {
-      origin: manifest.origin,
-      tool: name,
-    });
-    if (!prepared.ok) return { ok: false, text: prepared.text };
-    const { args: callArgs, resolved } = prepared;
+    const declared = manifest.fillsFrom ?? [];
+    const supplied = declared.filter((path) => args[path] !== undefined);
+    const missing = missingFills(manifest.fillsFrom, args);
+    if (!missing.length) {
+      return this.executeManifest(manifest, name, args, supplied);
+    }
+    const ask = { origin: manifest.origin, tool: name, fieldNames: missing };
+    const bounded = await this.approvals.requestBounded(
+      ask,
+      INLINE_APPROVAL_MS,
+      // Answered after the caller stopped waiting. Run the work now and file
+      // the result under the id so check_approval can return it. The fills
+      // exist only inside this closure, same as on the inline path.
+      async (late, id) => {
+        let result: ToolResult;
+        try {
+          result = late.ok
+            ? await this.executeManifest(
+                manifest,
+                name,
+                { ...args, ...late.fills },
+                [...supplied, ...Object.keys(late.fills)],
+              )
+            : { ok: false, text: approvalFailureText(late.reason, missing) };
+        } catch (err) {
+          result = {
+            ok: false,
+            text: err instanceof Error ? err.message : "tool failed",
+          };
+        }
+        this.storeApprovalResult(id, result);
+        this.recordAudit(manifest.origin, name, result.resolved ?? []);
+        this.recordSiteCall(manifest, result, 0);
+      },
+    );
+    if (bounded.status === "approved") {
+      return this.executeManifest(
+        manifest,
+        name,
+        { ...args, ...bounded.fills },
+        [...supplied, ...Object.keys(bounded.fills)],
+      );
+    }
+    if (bounded.status === "pending") {
+      // Not a failure -- a receipt. The human has not answered yet, and
+      // holding the caller open is what orphaned calls when the Durable
+      // Object reset underneath them.
+      return {
+        ok: false,
+        text: `approval-pending: waiting for a human to approve ${missing.join(", ")}. Call check_approval with id ${bounded.id}.`,
+        reason: "approval-pending",
+      };
+    }
+    return {
+      ok: false,
+      text: approvalFailureText(
+        bounded.status === "denied" ? "denied" : "needs-console",
+        missing,
+      ),
+      reason: bounded.status,
+    };
+  }
+
+  /**
+   * Everything after the human has (or has not) been asked.
+   *
+   * Extracted so the inline path and the late continuation run exactly the
+   * same code: a call approved after the caller gave up must not take a
+   * different route through the browser than one approved while it waited.
+   */
+  private async executeManifest(
+    manifest: ToolManifest,
+    name: string,
+    callArgs: Record<string, unknown>,
+    resolved: string[],
+  ): Promise<ToolResult> {
     const live = await this.ensureBrowser();
     if (!live) return { ok: false, text: "no browser" };
     if (originFromUrl(live.page.url()) !== manifest.origin) {
