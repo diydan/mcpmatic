@@ -6,6 +6,7 @@ type Props = {
   origins: Array<{ origin: string; label: string; kind: StoreKind }>;
   consented: ReadonlySet<string>;
   onGrant: (origin: string) => void;
+  onRevoke: (origin: string) => void;
   autonomous: boolean;
   onAutonomous: (on: boolean) => void;
 };
@@ -14,6 +15,7 @@ export function Consent({
   origins,
   consented,
   onGrant,
+  onRevoke,
   autonomous,
   onAutonomous,
 }: Props) {
@@ -60,6 +62,11 @@ export function Consent({
               >
                 {granted ? "granted" : "grant"}
               </button>
+              {granted && (
+                <button type="button" onClick={() => onRevoke(o.origin)}>
+                  revoke
+                </button>
+              )}
             </li>
           );
         })}
@@ -67,8 +74,8 @@ export function Consent({
           <li key={o}>
             <span className="badge">Yours</span>
             <span>{o.replace(/^https:\/\//, "")}</span>
-            <button type="button" disabled>
-              granted
+            <button type="button" onClick={() => onRevoke(o)}>
+              granted — revoke
             </button>
           </li>
         ))}

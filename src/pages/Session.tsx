@@ -408,6 +408,32 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
     return true;
   };
 
+  // Mirror of persistConsent: the server is the source of truth, the local
+  // set follows, and the tool registration re-syncs so the origin's tools
+  // unregister immediately. The account write happens DO-side via waitUntil.
+  const revoke = async (origin: string): Promise<boolean> => {
+    const res = await fetch(`/s/${sessionToken}/consent`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ origin }),
+    });
+    if (!res.ok) {
+      setLines((l) => [
+        ...l,
+        { kind: "system", text: `revoke failed for ${origin} (${res.status})` },
+      ]);
+      return false;
+    }
+    const next = new Set(consentedRef.current);
+    next.delete(origin);
+    consentedRef.current = next;
+    setConsented(next);
+    const registration = registrationRef.current;
+    if (registration) await syncTools(registration, next, observedRef.current);
+    setLines((l) => [...l, { kind: "system", text: `revoked ${origin}` }]);
+    return true;
+  };
+
   const openHref = async (raw: string): Promise<boolean> => {
     const href = navigationHref(raw);
     const origin = normaliseOrigin(raw);
@@ -536,6 +562,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           origins={ORIGINS}
           consented={consented}
           onGrant={(o) => void grant(o)}
+          onRevoke={(o) => void revoke(o)}
           autonomous={autonomous}
           onAutonomous={(on) => {
             setAutonomous(on);

@@ -99,6 +99,7 @@ import worker from "../worker/index";
  */
 function makeEnv(): Env & {
   __claimAccount: ReturnType<typeof vi.fn>;
+  __revokeConsent: ReturnType<typeof vi.fn>;
   __listHistory: ReturnType<typeof vi.fn>;
   __sessionGetByName: ReturnType<typeof vi.fn>;
   __oauthClientGetByName: ReturnType<typeof vi.fn>;
@@ -107,6 +108,10 @@ function makeEnv(): Env & {
   const claimAccount = vi.fn(async (_accountId: string) => ({
     ok: true,
     consent: ["https://www.allbirds.com"],
+  }));
+  const revokeConsent = vi.fn(async (_origin: string) => ({
+    ok: true,
+    consent: [],
   }));
   const listHistory = vi.fn(async () => [
     {
@@ -119,6 +124,7 @@ function makeEnv(): Env & {
   const sessionGetByName = vi.fn((_name: string) => ({
     initSession: async (_token: string) => {},
     claimAccount,
+    revokeConsent,
     listHistory,
     fetch: async (_req: Request) => new Response(null, { status: 200 }),
   }));
@@ -134,11 +140,13 @@ function makeEnv(): Env & {
     OAUTH_CODE: { getByName: oauthCodeGetByName },
     __sessionGetByName: sessionGetByName,
     __claimAccount: claimAccount,
+    __revokeConsent: revokeConsent,
     __listHistory: listHistory,
     __oauthClientGetByName: oauthClientGetByName,
     __oauthCodeGetByName: oauthCodeGetByName,
   } as unknown as Env & {
     __claimAccount: ReturnType<typeof vi.fn>;
+    __revokeConsent: ReturnType<typeof vi.fn>;
     __listHistory: ReturnType<typeof vi.fn>;
     __sessionGetByName: ReturnType<typeof vi.fn>;
     __oauthClientGetByName: ReturnType<typeof vi.fn>;
@@ -326,6 +334,45 @@ describe("POST /s/:token/account", () => {
     });
     const res = await worker.fetch!(post({ accountId: ACCOUNT }), env);
     expect(res.status).toBe(409);
+  });
+});
+
+describe("DELETE /s/:token/consent", () => {
+  const TOKEN = "a".repeat(64);
+
+  function del(body: unknown) {
+    return new Request(`https://worker.local/s/${TOKEN}/consent`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("revokes the origin and returns the remaining consent list", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(
+      del({ origin: "https://www.allbirds.com" }),
+      env as unknown as Env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, consent: [] });
+    expect(env.__revokeConsent).toHaveBeenCalledWith(
+      "https://www.allbirds.com",
+    );
+  });
+
+  it("rejects a non-https origin without touching the DO", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(del({ origin: "http://x.com" }), env);
+    expect(res.status).toBe(400);
+    expect(env.__revokeConsent).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unparseable origin without touching the DO", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(del({ origin: "not a url" }), env);
+    expect(res.status).toBe(400);
+    expect(env.__revokeConsent).not.toHaveBeenCalled();
   });
 });
 

@@ -8,7 +8,7 @@ import {
   type ServerMessage,
   type ToolSchema,
 } from "../shared/protocol";
-import type { ManifestStep } from "../shared/manifest";
+import { runSteps } from "./steps";
 import { originSlug } from "../shared/origin";
 import { isPrivateUrl } from "./is-private-url";
 import { makeResolve4 } from "./doh-resolve4";
@@ -68,10 +68,12 @@ type LiveBrowser = {
     url: () => string;
     title: () => Promise<string>;
     innerText: (selector: string) => Promise<string>;
-    fill?: (selector: string, value: string) => Promise<void>;
-    click?: (selector: string) => Promise<void>;
-    press?: (selector: string, key: string) => Promise<void>;
-    waitForSelector?: (selector: string) => Promise<unknown>;
+    // The options bag matters: without an explicit timeout Playwright waits
+    // its 30s default for an element that is simply not on this page.
+    fill?: (selector: string, value: string, opts?: { timeout?: number }) => Promise<void>;
+    click?: (selector: string, opts?: { timeout?: number }) => Promise<void>;
+    press?: (selector: string, key: string, opts?: { timeout?: number }) => Promise<void>;
+    waitForSelector?: (selector: string, opts?: { timeout?: number }) => Promise<unknown>;
     evaluate?: EvaluateFn & DiscoverFn;
     context: () => {
       newCDPSession: (page: unknown) => Promise<CdpSession>;
@@ -271,6 +273,28 @@ export class SessionDO extends DurableObject<Env> {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       JSON.stringify([...origins]),
     );
+  }
+
+  /**
+   * Remove an origin from the consent list, here and on the account this
+   * session was claimed by. The account write is not awaited, for the same
+   * reason `grantConsent`'s is not: consent must answer without waiting on a
+   * second Durable Object. Revoking an origin the session never had is a
+   * no-op, so a stale console cannot resurrect state by revoking it.
+   */
+  async revokeConsent(origin: string): Promise<{ ok: true; consent: string[] }> {
+    const allowed = this.readConsent().filter((o) => o !== origin);
+    this.writeConsent(allowed);
+    const accountId = this.accountId();
+    if (accountId && origin) {
+      this.ctx.waitUntil(
+        this.env.ACCOUNT.getByName(accountId)
+          .revoke(origin)
+          .then(() => undefined),
+      );
+    }
+    this.sendState();
+    return { ok: true, consent: allowed };
   }
 
   async grantConsent(origin: string): Promise<{ ok: true }> {
@@ -863,57 +887,39 @@ export class SessionDO extends DurableObject<Env> {
         : `${manifest.origin}'s own ${manifest.nativeName} (native WebMCP)`;
       return { ok: true, text: native.text ?? `ran ${how}`, resolved };
     }
-    for (const step of manifest.steps) {
-      await this.runStep(live, step, callArgs);
-    }
+    const { fillsAttempted, fillsLanded } = await runSteps(
+      live.page,
+      manifest.steps,
+      callArgs,
+      (url) => this.gotoGuarded(live, url),
+    );
     this.setCurrentOrigin(manifest.origin);
-    return { ok: true, text: `ran ${name} at ${live.page.url()}`, resolved };
+    // The failure this whole design exists to remove: six fields typed into a
+    // page that has none of them, reported as a success. A fill tool that
+    // filled nothing did nothing, and the human is owed that sentence.
+    if (fillsAttempted > 0 && fillsLanded === 0) {
+      return {
+        ok: false,
+        text: `${name} found none of its fields on ${live.page.url()} — nothing was filled. Open the page that has the form first.`,
+        reason: "no-field",
+        resolved,
+      };
+    }
+    const partial =
+      fillsLanded < fillsAttempted
+        ? ` (filled ${fillsLanded} of ${fillsAttempted} fields)`
+        : "";
+    return { ok: true, text: `ran ${name} at ${live.page.url()}${partial}`, resolved };
   }
 
-  private async runStep(
-    live: LiveBrowser,
-    step: ManifestStep,
-    args: Record<string, unknown>,
-  ): Promise<void> {
-    const interpolate = (template: string) =>
-      template.replace(/\{\{([^}]+)\}\}/g, (_, key: string) =>
-        encodeURIComponent(String(args[key] ?? "")),
-      );
-
-    if (step.action === "goto") {
-      const url = interpolate(step.url);
-      const blocked = await isPrivateUrl(url, makeResolve4());
-      if (blocked) throw new Error("navigation refused (ssrf)");
-      await live.page.goto(url, {
-        waitUntil: "domcontentloaded",
-        timeout: 30_000,
-      });
-      return;
-    }
-    if (step.action === "fill" || step.action === "type") {
-      const value = String(args[step.from] ?? "");
-      try {
-        await live.page.fill?.(step.selector, value);
-      } catch {
-        /* field missing on this checkout step */
-      }
-      return;
-    }
-    if (step.action === "click") {
-      try {
-        await live.page.click?.(step.selector);
-      } catch {
-        /* control missing on this page (cookie banner, layout) */
-      }
-      return;
-    }
-    if (step.action === "press") {
-      await live.page.press?.(step.selector, step.key);
-      return;
-    }
-    if (step.action === "wait") {
-      await live.page.waitForSelector?.(step.selector);
-    }
+  /** The one step that leaves the page it is on, so the one that needs the guard. */
+  private async gotoGuarded(live: LiveBrowser, url: string): Promise<void> {
+    const blocked = await isPrivateUrl(url, makeResolve4());
+    if (blocked) throw new Error("navigation refused (ssrf)");
+    await live.page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
   }
 
   private async onInput(msg: ClientMessage & { type: "input" }): Promise<void> {

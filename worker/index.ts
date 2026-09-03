@@ -47,6 +47,24 @@ export default {
       await stub.grantConsent(origin);
       return json({ ok: true, origin });
     }
+    if (consentMatch && request.method === "DELETE") {
+      // Same validation as the grant: an origin is an origin, whichever way
+      // the consent moves. The DO treats an unknown origin as a no-op.
+      const body = (await request.json()) as { origin?: unknown };
+      const origin = typeof body.origin === "string" ? body.origin : "";
+      let parsed: URL;
+      try {
+        parsed = new URL(origin);
+      } catch {
+        return json({ ok: false, error: "origin must be https" }, 400);
+      }
+      if (parsed.protocol !== "https:") {
+        return json({ ok: false, error: "origin must be https" }, 400);
+      }
+      const stub = env.SESSION.getByName(consentMatch[1]);
+      const revoked = await stub.revokeConsent(origin);
+      return json({ ok: true, consent: revoked.consent });
+    }
 
     // Read-only. The durable log the account holds, or the session's own rows
     // when it has no account. Rows are {origin, tool, fieldNames, ts} — there
