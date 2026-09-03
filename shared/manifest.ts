@@ -33,6 +33,8 @@ export type ToolManifest = {
 export const ALWAYS_ON_TOOLS = [
   "get_page_state",
   "list_available_origins",
+  "list_remote_tools",
+  "call_remote_tool",
   "navigate_to",
 ] as const;
 

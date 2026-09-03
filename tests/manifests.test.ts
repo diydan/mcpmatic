@@ -47,6 +47,13 @@ describe("manifestFor", () => {
     expect(m).toBeUndefined();
     expect(kv.get).not.toHaveBeenCalled();
   });
+
+  it("resolves list_remote_tools and call_remote_tool without touching kv", async () => {
+    const kv = fakeKv({});
+    expect(await manifestFor("list_remote_tools", kv)).toBeUndefined();
+    expect(await manifestFor("call_remote_tool", kv)).toBeUndefined();
+    expect(kv.get).not.toHaveBeenCalled();
+  });
 });
 
 describe("originOfTool", () => {
