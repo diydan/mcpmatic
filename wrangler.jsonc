@@ -47,9 +47,22 @@
   "ai": {
     "binding": "AI"
   },
+  // SPEC 4.1: "application logs never record the raw path or token." The
+  // capability URL in /s/<token>/... is the session's only credential, and the
+  // automatic invocation log records the request URL — so leaving it on put
+  // that credential in Workers Logs on every bridge, consent, account and
+  // audit request. `invocation_logs: false` drops that record while keeping
+  // anything the Worker logs deliberately, none of which contains a token.
+  //
+  // This is sprint item P1.1. Traces are left off for the same reason: a span
+  // carrying the request URL would reintroduce exactly what this removes.
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false
+    }
   },
   "limits": {
     "cpu_ms": 60000
