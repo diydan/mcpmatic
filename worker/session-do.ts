@@ -9,6 +9,7 @@ import {
   type ToolSchema,
 } from "../shared/protocol";
 import type { ManifestStep } from "../shared/manifest";
+import { originSlug } from "../shared/origin";
 import { isPrivateUrl } from "./is-private-url";
 import { makeResolve4 } from "./doh-resolve4";
 import {
@@ -29,13 +30,16 @@ import {
   type ChatTurn,
 } from "./agent";
 import { MANIFESTS, manifestFor } from "./manifests";
+import { mergeAutonomousConsent } from "../shared/autonomous";
 import { buildToolList } from "./mcp/tools";
 import {
   callNativeTool,
   discoverNativeTools,
+  parseCallRemoteArgs,
   type DiscoverFn,
   type EvaluateFn,
 } from "./native-webmcp";
+import type { DiscoveredTool } from "../shared/protocol";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
@@ -76,6 +80,8 @@ export class SessionDO extends DurableObject<Env> {
   private launching: Promise<LiveBrowser | null> | null = null;
   private pending: PendingTurn | null = null;
   private driving = false;
+  private remoteTools: DiscoveredTool[] = [];
+  private remoteToolsOrigin: string | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -144,6 +150,11 @@ export class SessionDO extends DurableObject<Env> {
             JSON.stringify(allowed),
           );
         }
+        this.ctx.storage.sql.exec(
+          `INSERT INTO meta (key, value) VALUES ('origin', ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          origin,
+        );
       }
     });
   }
@@ -172,8 +183,8 @@ export class SessionDO extends DurableObject<Env> {
    * route so the Session page can hydrate its `consented` state on mount
    * when an origin was pre-seeded via POST /sessions. Idempotent.
    */
-  async listConsent(): Promise<{ consent: string[] }> {
-    return { consent: this.readConsent() };
+  async listConsent(): Promise<{ consent: string[]; autonomous: boolean }> {
+    return { consent: this.readConsent(), autonomous: this.readAutonomous() };
   }
 
   async grantConsent(origin: string): Promise<{ ok: true }> {
@@ -302,6 +313,9 @@ export class SessionDO extends DurableObject<Env> {
         return;
       case "input":
         await this.onInput(msg);
+        return;
+      case "autonomous":
+        await this.setAutonomous(msg.on);
         return;
     }
   }
@@ -526,6 +540,11 @@ export class SessionDO extends DurableObject<Env> {
       const found = await discoverNativeTools(
         live.page.evaluate.bind(live.page) as DiscoverFn,
       );
+      if (live.page.url() === url) {
+        this.remoteToolsOrigin = originFromUrl(url);
+        this.remoteTools = found.ok ? found.tools ?? [] : [];
+        this.sendState();
+      }
       if (!found.ok) {
         return {
           ok: true,
@@ -550,15 +569,59 @@ export class SessionDO extends DurableObject<Env> {
       return {
         ok: true,
         text:
-          `${url} exposes ${tools.length} WebMCP tool${tools.length === 1 ? "" : "s"} of its own${how}:\n` +
-          tools.map((t) => `- ${t.name}: ${t.description}`).join("\n"),
+          `${url} exposes ${tools.length} WebMCP tool${tools.length === 1 ? "" : "s"} of its own${how}. ` +
+          `Each is also registered on this page as <name>_on_${originSlug(originFromUrl(url))} for ChatGPT.\n` +
+          tools
+            .map(
+              (t) =>
+                `- ${t.name}: ${t.description}\n  schema: ${JSON.stringify(t.inputSchema)}`,
+            )
+            .join("\n"),
       };
+    }
+    if (name === "call_remote_tool") {
+      const parsed = parseCallRemoteArgs(args);
+      if (!parsed.ok) return { ok: false, text: parsed.text };
+      const target = parsed.origin ?? "";
+      if (target && !(await this.allowOrigin(originFromUrl(target)))) {
+        return { ok: false, text: "origin not consented" };
+      }
+      const live = target ? await this.ensureBrowser() : this.live;
+      if (!live) {
+        return { ok: false, text: "No remote page open yet. Grant an origin first." };
+      }
+      if (!live.page.evaluate) {
+        return { ok: false, text: `cannot reach ${parsed.name} on the remote page` };
+      }
+      if (target && originFromUrl(live.page.url()) !== originFromUrl(target)) {
+        const blocked = await isPrivateUrl(target, makeResolve4());
+        if (blocked) return { ok: false, text: "navigation refused (ssrf)" };
+        await live.page.goto(target, {
+          waitUntil: "domcontentloaded",
+          timeout: 30_000,
+        });
+        this.setCurrentOrigin(originFromUrl(target));
+      }
+      const origin = originFromUrl(live.page.url());
+      if (!(await this.allowOrigin(origin))) {
+        return { ok: false, text: "origin not consented" };
+      }
+      const native = await callNativeTool(
+        live.page.evaluate.bind(live.page) as EvaluateFn,
+        parsed.name,
+        parsed.arguments,
+      );
+      if (!native.used) {
+        return { ok: false, text: nativeFailure(parsed.name, origin, native) };
+      }
+      return { ok: true, text: native.text ?? `ran ${origin}'s own ${parsed.name}` };
     }
     if (name === "navigate_to") {
       const target = String(args.origin ?? args.url ?? "");
       const blocked = await isPrivateUrl(target, makeResolve4());
       if (blocked) return { ok: false, text: "navigation refused (ssrf)" };
-      if (!this.consented(originFromUrl(target))) {
+      const dest = originFromUrl(target);
+      if (!(await this.allowOrigin(dest))) {
         return { ok: false, text: "origin not consented" };
       }
       const live = await this.ensureBrowser();
@@ -568,12 +631,13 @@ export class SessionDO extends DurableObject<Env> {
         timeout: 30_000,
       });
       this.setCurrentOrigin(originFromUrl(target));
+      void this.refreshRemoteTools(live);
       return { ok: true, text: `navigated to ${live.page.url()}` };
     }
 
     const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
     if (!manifest) return { ok: false, text: `unknown tool ${name}` };
-    if (!this.consented(manifest.origin)) {
+    if (!(await this.allowOrigin(manifest.origin))) {
       return { ok: false, text: "origin not consented" };
     }
     const live = await this.ensureBrowser();
@@ -644,7 +708,11 @@ export class SessionDO extends DurableObject<Env> {
       return;
     }
     if (step.action === "click") {
-      await live.page.click?.(step.selector);
+      try {
+        await live.page.click?.(step.selector);
+      } catch {
+        /* control missing on this page (cookie banner, layout) */
+      }
       return;
     }
     if (step.action === "press") {
@@ -794,6 +862,41 @@ export class SessionDO extends DurableObject<Env> {
     return this.readConsent().includes(origin);
   }
 
+  private readAutonomous(): boolean {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'autonomous' LIMIT 1`,
+      )
+      .toArray()[0];
+    return row?.value === "1";
+  }
+
+  private async allowOrigin(origin: string): Promise<boolean> {
+    if (!origin) return false;
+    if (this.consented(origin)) return true;
+    if (!this.readAutonomous()) return false;
+    await this.grantConsent(origin);
+    return this.consented(origin);
+  }
+
+  private async setAutonomous(on: boolean): Promise<void> {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('autonomous', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      on ? "1" : "0",
+    );
+    if (on) {
+      const catalog = [...new Set(MANIFESTS.map((m) => m.origin))];
+      const merged = mergeAutonomousConsent(this.readConsent(), catalog);
+      this.ctx.storage.sql.exec(
+        `INSERT INTO meta (key, value) VALUES ('consent', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        JSON.stringify(merged),
+      );
+    }
+    this.sendState();
+  }
+
   private currentOrigin(): string | null {
     const row = this.ctx.storage.sql
       .exec<{ value: string }>(`SELECT value FROM meta WHERE key = 'origin' LIMIT 1`)
@@ -827,13 +930,41 @@ export class SessionDO extends DurableObject<Env> {
     return this.env.BROWSER ? "idle" : "missing";
   }
 
+  private async refreshRemoteTools(live: LiveBrowser): Promise<void> {
+    if (!live.page.evaluate) {
+      this.remoteTools = [];
+      this.sendState();
+      return;
+    }
+    const url = live.page.url();
+    const found = await discoverNativeTools(
+      live.page.evaluate.bind(live.page) as DiscoverFn,
+    );
+    if (live.page.url() !== url) return;
+    this.remoteToolsOrigin = originFromUrl(url);
+    this.remoteTools = found.ok ? found.tools ?? [] : [];
+    this.sendState();
+  }
+
   private sendState(): void {
+    const origin = this.currentOrigin();
+    let pageUrl: string | null = origin;
+    try {
+      pageUrl = this.live?.page.url() ?? origin;
+    } catch {
+      pageUrl = origin;
+    }
     this.broadcast({
       v: 1,
       type: "state",
-      origin: this.currentOrigin(),
+      origin,
+      url: pageUrl,
       driving: this.driving,
       browser: this.browserState(),
+      remoteTools:
+        origin && origin === this.remoteToolsOrigin ? this.remoteTools : [],
+      consented: this.readConsent(),
+      autonomous: this.readAutonomous(),
     });
   }
 

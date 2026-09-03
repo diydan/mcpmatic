@@ -126,6 +126,7 @@ async function createSession(request: Request, env: Env): Promise<Response> {
   return json({
     sessionToken,
     url: `${origin}/s/${sessionToken}`,
+    origin: seededOrigin ?? null,
   });
 }
 

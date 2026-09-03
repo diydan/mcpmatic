@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { callNativeTool, discoverNativeTools } from "../worker/native-webmcp";
+import {
+  callNativeTool,
+  discoverNativeTools,
+  parseCallRemoteArgs,
+  sanitizeDiscoveredTools,
+} from "../worker/native-webmcp";
 
 describe("callNativeTool", () => {
   it("reports the remote tool's own failure, not absence", async () => {
@@ -63,12 +68,17 @@ describe("discoverNativeTools", () => {
     const out = await discoverNativeTools(async () => ({
       ok: true,
       tools: [
-        { name: "search_catalog", description: "Search the store catalog." },
-        { name: "update_cart", description: "Add or change cart lines." },
+        {
+          name: "search_catalog",
+          description: "Search the store catalog.",
+          inputSchema: { type: "object", properties: { query: { type: "string" } } },
+        },
+        { name: "update_cart", description: "Add or change cart lines.", inputSchema: { type: "object", properties: {} } },
       ],
     }));
     expect(out.ok).toBe(true);
     expect(out.tools?.map((t) => t.name)).toEqual(["search_catalog", "update_cart"]);
+    expect(out.tools?.[0]?.inputSchema).toMatchObject({ type: "object" });
   });
 
   it("distinguishes an empty list from a missing implementation", async () => {
@@ -93,5 +103,57 @@ describe("discoverNativeTools", () => {
       throw new Error("Execution context was destroyed");
     });
     expect(out).toMatchObject({ ok: false, reason: "threw" });
+  });
+});
+
+describe("sanitizeDiscoveredTools", () => {
+  it("keeps a JSON schema and drops tools with illegal names", () => {
+    const tools = sanitizeDiscoveredTools([
+      {
+        name: "search_catalog",
+        description: "Search",
+        inputSchema: { type: "object", properties: { q: { type: "string" } } },
+      },
+      { name: "not a tool", description: "spaces" },
+      { name: "ok_tool", description: "x\u0000y", inputSchema: "nope" },
+    ]);
+    expect(tools.map((t) => t.name)).toEqual(["search_catalog", "ok_tool"]);
+    expect(tools[0].inputSchema).toEqual({
+      type: "object",
+      properties: { q: { type: "string" } },
+    });
+    expect(tools[1].inputSchema).toEqual({ type: "object", properties: {} });
+    expect(tools[1].description).not.toContain("\u0000");
+  });
+});
+
+describe("parseCallRemoteArgs", () => {
+  it("reads the native name and argument object", () => {
+    expect(
+      parseCallRemoteArgs({
+        name: "search_catalog",
+        arguments: { catalog: { query: "wool" } },
+        origin: "https://www.allbirds.com",
+      }),
+    ).toEqual({
+      ok: true,
+      name: "search_catalog",
+      arguments: { catalog: { query: "wool" } },
+      origin: "https://www.allbirds.com",
+    });
+  });
+
+  it("refuses an illegal native name", () => {
+    const out = parseCallRemoteArgs({ name: "search catalog" });
+    expect(out.ok).toBe(false);
+  });
+
+  it("defaults missing arguments to an empty object", () => {
+    expect(parseCallRemoteArgs({ name: "get_cart" })).toEqual({
+      ok: true,
+      name: "get_cart",
+      arguments: {},
+      origin: null,
+    });
   });
 });

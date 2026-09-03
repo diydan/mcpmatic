@@ -4,10 +4,10 @@ A WebMCP session that spans origins.
 
 Shopify storefronts already register `search_catalog`, `update_cart`, and
 `proceed_to_checkout`. This page does not reimplement those handlers. It
-proxies them, origin-qualified, so an agent that is not on the store can
-still call them. Sites with no WebMCP get a synthesised tool. A local
-profile fills only the checkout fields the store’s own tools do not
-provide.
+proxies them, origin-qualified, so ChatGPT — which only sees tools on the
+page it loaded — can still call them. Sites with no WebMCP get a synthesised
+tool. Observed tools on the open page are registered the same way. A local
+profile fills only the fields a tool named, after the human blesses them.
 
 **Live:** <https://mcpmatic.dan-3c7.workers.dev> — open it, grant an origin,
 and the tools appear. No login, no key, no install.
@@ -44,11 +44,17 @@ session page. That is this.
 
 | Origin | Kind | Tools |
 |---|---|---|
-| [allbirds.com](https://www.allbirds.com) | Shopify native | `search_catalog_on_allbirds_com`, `update_cart_on_allbirds_com`, `proceed_to_checkout_on_allbirds_com`, `fill_checkout_on_allbirds_com` |
+| [allbirds.com](https://www.allbirds.com) | Shopify native | `search_catalog_on_allbirds_com`, `update_cart_on_allbirds_com`, `proceed_to_checkout_on_allbirds_com`, `fill_checkout_on_allbirds_com`, plus whatever else the store registers, observed live |
 | [brooklinen.com](https://www.brooklinen.com) | Shopify native | same pack, `_on_brooklinen_com` |
 | [kayak.com](https://www.kayak.com) | Synthesised | `search_flights_on_kayak_com` |
+| [gov.uk](https://www.gov.uk/find-local-council) | Synthesised + bless | `find_local_council_on_gov_uk` (postcode only) |
 
-The hosted UI's header accepts any URL, not just these three. On the home
+You browse the remote page; ChatGPT calls the tools on this façade. Grant any
+https origin — `list_remote_tools` reports its real WebMCP surface, and
+`call_remote_tool` plus origin-qualified `registerTool` make those tools
+callable from ChatGPT without a hand-authored manifest.
+
+The hosted UI's header accepts any URL, not just these four. On the home
 page it initializes a session pre-granted for the chosen origin by POSTing
 `{ origin }` to `/sessions`; on the session page the same input drives the
 existing `navigate_to` tool to point the live browser at any URL. The server

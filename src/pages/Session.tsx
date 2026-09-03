@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import type {
   AuditRow,
   BrowserState,
+  DiscoveredTool,
   ServerMessage,
   ToolSchema,
 } from "../../shared/protocol";
@@ -17,11 +18,14 @@ import { openBridge } from "../lib/bridge";
 import {
   createRegistration,
   type BlessRequest,
+  type ObservedByOrigin,
   type Registration,
 } from "../lib/register-all";
+import { Surface } from "../components/Surface";
 import { profileStore, seedIfEmpty } from "../lib/profile-store";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
+import { navigationHref, normaliseOrigin } from "../../shared/origin";
 
 const MANIFESTS = allManifests();
 const ORIGINS = STORES.map((s) => ({
@@ -35,13 +39,20 @@ type Line = {
   text: string;
 };
 
+function originFromNavState(state: unknown): string | null {
+  if (!state || typeof state !== "object") return null;
+  const origin = (state as { origin?: unknown }).origin;
+  return typeof origin === "string" && origin ? origin : null;
+}
+
 export function Session() {
   const { sessionToken = "" } = useParams();
+  const seededFromNav = originFromNavState(useLocation().state);
   const [tools, setTools] = useState<ToolSchema[]>([]);
   const [lines, setLines] = useState<Line[]>([
     {
       kind: "system",
-      text: "get_page_state, list_available_origins and navigate_to are always registered. Grant an origin to add its tools. Shopify stores proxy their native WebMCP; Kayak is synthesised. This panel only calls getTools / executeTool.",
+      text: "You browse; ChatGPT calls tools on this page. Grant an origin to add its tools. Shopify stores proxy their native WebMCP; Kayak and GOV.UK are synthesised. Observed tools from the open page are registered origin-qualified.",
     },
   ]);
   const [audit, setAudit] = useState<AuditRow[]>([]);
@@ -51,13 +62,23 @@ export function Session() {
   const [busy, setBusy] = useState(false);
   const [navBusy, setNavBusy] = useState(false);
   const [navError, setNavError] = useState<string | undefined>(undefined);
-  // Incremented after a successful navigate_to so Header resets its input.
-  const [navKey, setNavKey] = useState(0);
-  const [consented, setConsented] = useState<Set<string>>(new Set());
+  const [consented, setConsented] = useState<Set<string>>(
+    () => new Set(seededFromNav ? [seededFromNav] : []),
+  );
+  const [pageOrigin, setPageOrigin] = useState<string | null>(seededFromNav);
+  const [pageUrl, setPageUrl] = useState<string | null>(seededFromNav);
+  const [remoteTools, setRemoteTools] = useState<DiscoveredTool[]>([]);
+  const [autonomous, setAutonomous] = useState(false);
   const [bless, setBless] = useState<BlessRequest | null>(null);
   const blessWait = useRef<((ok: boolean) => void) | null>(null);
   const bridgeRef = useRef<ReturnType<typeof openBridge> | null>(null);
   const registrationRef = useRef<Registration | null>(null);
+  const consentedRef = useRef(consented);
+  const browserRef = useRef(browser);
+  const observedRef = useRef<Record<string, DiscoveredTool[]>>({});
+  const observedKeyRef = useRef("");
+  consentedRef.current = consented;
+  browserRef.current = browser;
 
   const refreshTools = useCallback(async () => {
     const mc = ensureModelContext();
@@ -70,8 +91,12 @@ export function Session() {
   }, []);
 
   const syncTools = useCallback(
-    async (registration: Registration, granted: ReadonlySet<string>) => {
-      const report = await registration.sync(granted);
+    async (
+      registration: Registration,
+      granted: ReadonlySet<string>,
+      observed?: ObservedByOrigin,
+    ) => {
+      const report = await registration.sync(granted, observed);
       for (const failure of report.failed) {
         setLines((l) => [
           ...l,
@@ -101,7 +126,11 @@ export function Session() {
       try {
         const res = await fetch(`/s/${sessionToken}/consent`);
         if (res.ok) {
-          const body = (await res.json()) as { consent?: unknown };
+          const body = (await res.json()) as {
+            consent?: unknown;
+            autonomous?: unknown;
+          };
+          if (body.autonomous === true) setAutonomous(true);
           if (Array.isArray(body.consent)) {
             seeded = body.consent.filter((x): x is string => typeof x === "string");
           }
@@ -112,8 +141,10 @@ export function Session() {
       if (cancelled || seeded.length === 0) return;
       const next = new Set(seeded);
       setConsented(next);
+      setPageOrigin((o) => o ?? seeded[0]);
+      setPageUrl((u) => u ?? seeded[0]);
       const reg = registrationRef.current;
-      if (reg) await syncTools(reg, next);
+      if (reg) await syncTools(reg, next, observedRef.current);
       setLines((l) => [
         ...l,
         {
@@ -121,6 +152,16 @@ export function Session() {
           text: `pre-granted ${seeded.join(", ")} from session create`,
         },
       ]);
+      // Open the first seeded origin so the viewport is not empty and ChatGPT
+      // sees the remote tools as soon as they register.
+      try {
+        const mc = ensureModelContext();
+        const listed = await mc.getTools();
+        const nav = listed.find((t) => t.name === "navigate_to");
+        if (nav) await mc.executeTool(nav, { origin: seeded[0] });
+      } catch {
+        /* browser binding missing; tools still register */
+      }
     })();
     return () => {
       cancelled = true;
@@ -149,6 +190,38 @@ export function Session() {
         if (msg.type === "state") {
           setDriving(msg.driving);
           setBrowser(msg.browser);
+          if (msg.origin) setPageOrigin(msg.origin);
+          if (msg.url) setPageUrl(msg.url);
+          if (typeof msg.autonomous === "boolean") setAutonomous(msg.autonomous);
+          if (msg.consented) {
+            const next = new Set(msg.consented);
+            const same =
+              next.size === consentedRef.current.size &&
+              [...next].every((o) => consentedRef.current.has(o));
+            if (!same) {
+              consentedRef.current = next;
+              setConsented(next);
+              const reg = registrationRef.current;
+              if (reg) {
+                void syncTools(reg, next, observedRef.current);
+              }
+            }
+          }
+          if (msg.origin && msg.remoteTools) {
+            const key = `${msg.origin}:${msg.remoteTools.map((t) => t.name).join(",")}`;
+            setRemoteTools(msg.remoteTools);
+            if (key !== observedKeyRef.current) {
+              observedKeyRef.current = key;
+              observedRef.current = {
+                ...observedRef.current,
+                [msg.origin]: msg.remoteTools,
+              };
+              const reg = registrationRef.current;
+              if (reg) {
+                void syncTools(reg, consentedRef.current, observedRef.current);
+              }
+            }
+          }
         }
         if (msg.type === "audit") setAudit(msg.rows);
         if (msg.type === "assistant") {
@@ -202,7 +275,7 @@ export function Session() {
     // the first sync is still in flight (React StrictMode remounts).
     const registration = createRegistration({
       manifests: MANIFESTS,
-      consented: new Set(),
+      consented: new Set(seededFromNav ? [seededFromNav] : []),
       executeRemote: (name, args) => {
         const live = bridgeRef.current;
         if (!live) return Promise.reject(new Error("no bridge"));
@@ -216,7 +289,10 @@ export function Session() {
         }),
     });
     registrationRef.current = registration;
-    void syncTools(registration, new Set());
+    void syncTools(
+      registration,
+      new Set(seededFromNav ? [seededFromNav] : []),
+    );
     bridge.send({ v: 1, type: "screencast", on: true });
 
     const onVisibility = () => {
@@ -235,9 +311,10 @@ export function Session() {
       registrationRef.current = null;
       bridge.close();
     };
-  }, [sessionToken, refreshTools, syncTools]);
+  }, [sessionToken, refreshTools, syncTools, seededFromNav]);
 
-  const grant = async (origin: string) => {
+  const persistConsent = async (origin: string): Promise<boolean> => {
+    if (consentedRef.current.has(origin)) return true;
     const res = await fetch(`/s/${sessionToken}/consent`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -248,30 +325,50 @@ export function Session() {
         ...l,
         { kind: "system", text: `consent failed for ${origin} (${res.status})` },
       ]);
-      return;
+      return false;
     }
-    const next = new Set(consented);
+    const next = new Set(consentedRef.current);
     next.add(origin);
+    consentedRef.current = next;
     setConsented(next);
     const registration = registrationRef.current;
-    // Only this origin's tools are added. Everything already registered keeps
-    // its own AbortController and is left alone (SPEC 2.5).
-    if (registration) await syncTools(registration, next);
+    if (registration) await syncTools(registration, next, observedRef.current);
     setLines((l) => [...l, { kind: "system", text: `granted ${origin}` }]);
+    return true;
+  };
 
-    // A site we have no manifest for gains no tools of its own, so granting it
-    // would look like nothing happened. Send the remote browser there — through
-    // the registered tool, not around it, so the invocation path stays
-    // getTools/executeTool even when a human started it.
-    if (MANIFESTS.some((m) => m.origin === origin)) return;
+  const openHref = async (raw: string): Promise<boolean> => {
+    const href = navigationHref(raw);
+    const origin = normaliseOrigin(raw);
+    if (!href || !origin) {
+      setNavError("Needs an https site, like allbirds.com");
+      return false;
+    }
+    if (!(await persistConsent(origin))) return false;
+    await bridgeRef.current?.exec("navigate_to", { origin: href });
+    setPageOrigin(origin);
+    setPageUrl(href);
+    return true;
+  };
+
+  const grant = async (origin: string) => {
+    if (!(await persistConsent(origin))) return;
+    if (browserRef.current !== "live") {
+      setPageOrigin(origin);
+      setPageUrl(origin);
+    }
+
+    // Open the page when nothing is live yet so ChatGPT sees observed tools.
+    // If a browser is already on another granted origin, stay — granting
+    // Brooklinen must not dump Allbirds from the viewport.
+    const shouldOpen =
+      browserRef.current !== "live" ||
+      !MANIFESTS.some((m) => m.origin === origin);
+    if (!shouldOpen) return;
     try {
+      await openHref(origin);
       const mc = ensureModelContext();
       const listed = await mc.getTools();
-      const nav = listed.find((t) => t.name === "navigate_to");
-      if (nav) await mc.executeTool(nav, { origin });
-      // Then say what the site brings of its own. For an origin we hold no
-      // manifest for this is the only honest answer to "what can it do?", and
-      // for a WebMCP site it is the whole point.
       const discover = listed.find((t) => t.name === "list_remote_tools");
       if (discover) {
         const found = await mc.executeTool(discover, {});
@@ -288,6 +385,32 @@ export function Session() {
     }
   };
 
+  const runOffer = async (name: string) => {
+    const mc = ensureModelContext();
+    const listed = await mc.getTools();
+    const tool = listed.find((t) => t.name === name);
+    if (!tool) {
+      setLines((l) => [
+        ...l,
+        { kind: "system", text: `tool ${name} is not registered on this page` },
+      ]);
+      return;
+    }
+    setLines((l) => [...l, { kind: "tool", text: `you started ${name}` }]);
+    try {
+      const result = await mc.executeTool(tool, {});
+      setLines((l) => [...l, { kind: "tool", text: String(result) }]);
+    } catch (err) {
+      setLines((l) => [
+        ...l,
+        {
+          kind: "system",
+          text: err instanceof Error ? err.message : "offer failed",
+        },
+      ]);
+    }
+  };
+
   return (
     <div className="shell">
       <div className="shell__top">
@@ -296,13 +419,12 @@ export function Session() {
           submitLabel="Navigate"
           disabled={navBusy}
           error={navError}
-          successKey={navKey}
+          currentUrl={pageUrl ?? pageOrigin ?? ""}
           onSubmit={async (url) => {
             setNavError(undefined);
             setNavBusy(true);
             try {
-              await bridgeRef.current?.exec("navigate_to", { origin: url });
-              setNavKey((k) => k + 1);
+              await openHref(url);
             } catch (err) {
               setNavError(
                 err instanceof Error ? err.message : "navigation failed",
@@ -339,7 +461,31 @@ export function Session() {
         }}
       />
       <div className="shell__right">
-        <Consent origins={ORIGINS} consented={consented} onGrant={(o) => void grant(o)} />
+        <Consent
+          origins={ORIGINS}
+          consented={consented}
+          onGrant={(o) => void grant(o)}
+          autonomous={autonomous}
+          onAutonomous={(on) => {
+            setAutonomous(on);
+            bridgeRef.current?.send({ v: 1, type: "autonomous", on });
+            setLines((l) => [
+              ...l,
+              {
+                kind: "system",
+                text: on
+                  ? "autonomous on — demo origins granted; new sites grant on open"
+                  : "autonomous off — new sites need a grant",
+              },
+            ]);
+          }}
+        />
+        <Surface
+          origin={pageOrigin}
+          remoteTools={remoteTools}
+          registered={tools}
+          onOffer={(name) => void runOffer(name)}
+        />
         <Viewport
           jpeg={jpeg}
           driving={driving}

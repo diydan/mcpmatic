@@ -69,6 +69,7 @@ describe("incremental registration", () => {
     const { registration } = harness();
     const report = await registration.sync(new Set());
     expect(report.registered.sort()).toEqual([
+      "call_remote_tool",
       "get_page_state",
       "list_available_origins",
       "list_remote_tools",
@@ -122,6 +123,18 @@ describe("incremental registration", () => {
     expect(await mc.getTools()).toEqual([]);
   });
 
+  it("serialises overlapping syncs so a spine tool is not registered twice", async () => {
+    const mc = ensureModelContext();
+    const { registration } = harness();
+    const first = registration.sync(new Set());
+    const second = registration.sync(new Set([ALLBIRDS]));
+    const [a, b] = await Promise.all([first, second]);
+    expect([...a.failed, ...b.failed]).toEqual([]);
+    const names = (await mc.getTools()).map((t) => t.name);
+    expect(names.filter((n) => n === "get_page_state")).toHaveLength(1);
+    expect(names).toContain("search_catalog_on_allbirds_com");
+  });
+
   it("drops an origin's tools when consent is withdrawn", async () => {
     const { registration } = harness();
     await registration.sync(new Set([KAYAK]));
@@ -156,6 +169,54 @@ describe("execute refuses loudly", () => {
     expect(executeRemote).toHaveBeenCalledWith("fill_checkout_on_allbirds_com", {
       "address.postcode": "EC2A 3DZ",
     });
+  });
+
+  it("registers observed remote tools origin-qualified without colliding with a manifest", async () => {
+    const mc = ensureModelContext();
+    const { registration, executeRemote } = harness();
+    await registration.sync(new Set([ALLBIRDS]), {
+      [ALLBIRDS]: [
+        {
+          name: "search_catalog",
+          description: "Search the store catalog.",
+          inputSchema: { type: "object", properties: { q: { type: "string" } } },
+        },
+        {
+          name: "get_product",
+          description: "Get a product.",
+          inputSchema: { type: "object", properties: { handle: { type: "string" } } },
+        },
+      ],
+    });
+
+    const names = (await mc.getTools()).map((t) => t.name);
+    // Manifest already owns search_catalog_on_allbirds_com.
+    expect(names.filter((n) => n === "search_catalog_on_allbirds_com")).toHaveLength(1);
+    expect(names).toContain("get_product_on_allbirds_com");
+
+    const tool = (await mc.getTools()).find((t) => t.name === "get_product_on_allbirds_com");
+    await mc.executeTool(tool!, { handle: "wool-runner" });
+    expect(executeRemote).toHaveBeenCalledWith("call_remote_tool", {
+      name: "get_product",
+      arguments: { handle: "wool-runner" },
+      origin: ALLBIRDS,
+    });
+  });
+
+  it("does not register observed tools for an origin that is not consented", async () => {
+    const mc = ensureModelContext();
+    const { registration } = harness();
+    await registration.sync(new Set(), {
+      [ALLBIRDS]: [
+        {
+          name: "get_product",
+          description: "Get a product.",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+    });
+    const names = (await mc.getTools()).map((t) => t.name);
+    expect(names).not.toContain("get_product_on_allbirds_com");
   });
 
   it("re-reads consent at call time, not at registration time", async () => {

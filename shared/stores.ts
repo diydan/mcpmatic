@@ -33,6 +33,14 @@ export const STORES: Store[] = [
     kind: "facade",
     blurb: "No WebMCP. The façade synthesises a search tool and drives the page.",
   },
+  {
+    origin: "https://www.gov.uk",
+    slug: "gov_uk",
+    label: "GOV.UK",
+    kind: "facade",
+    blurb:
+      "Find your local council. Bless a postcode; the rest of the profile stays on this device.",
+  },
 ];
 
 function shopifyTools(store: Store): ToolManifest[] {
@@ -168,6 +176,36 @@ function shopifyTools(store: Store): ToolManifest[] {
   ];
 }
 
+const govUk: ToolManifest = {
+  name: "find_local_council_on_gov_uk",
+  kind: "facade",
+  origin: "https://www.gov.uk",
+  description:
+    "Find the local council for the shopper's postcode on GOV.UK. Blesses only address.postcode; does not send name or the rest of the profile. Does not log the value.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  },
+  fillsFrom: ["address.postcode"],
+  steps: [
+    { action: "goto", url: "https://www.gov.uk/find-local-council" },
+    {
+      action: "click",
+      selector: "button[data-accept-cookies='false']",
+    },
+    {
+      action: "fill",
+      selector: "input[name='postcode'], #postcode",
+      from: "address.postcode",
+    },
+    {
+      action: "click",
+      selector: "main button[type='submit'], main .govuk-button",
+    },
+  ],
+};
+
 const kayak: ToolManifest = {
   name: "search_flights_on_kayak_com",
   kind: "facade",
@@ -196,5 +234,6 @@ export function allManifests(): ToolManifest[] {
   return [
     ...STORES.filter((s) => s.kind === "shopify-webmcp").flatMap(shopifyTools),
     kayak,
+    govUk,
   ];
 }

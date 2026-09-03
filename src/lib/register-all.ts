@@ -1,4 +1,6 @@
 import type { ToolManifest } from "../../shared/manifest";
+import { qualifiedToolName } from "../../shared/origin";
+import type { DiscoveredTool } from "../../shared/protocol";
 import { ensureModelContext } from "./webmcp-polyfill";
 
 export type BlessRequest = {
@@ -25,9 +27,14 @@ export type SyncReport = {
   failed: Array<{ name: string; message: string }>;
 };
 
+export type ObservedByOrigin = Readonly<Record<string, DiscoveredTool[]>>;
+
 export type Registration = {
   /** Register what consent now allows; unregister what it no longer allows. */
-  sync: (consented: ReadonlySet<string>) => Promise<SyncReport>;
+  sync: (
+    consented: ReadonlySet<string>,
+    observed?: ObservedByOrigin,
+  ) => Promise<SyncReport>;
   /** Abort every tool. The panel and ChatGPT both lose them (SPEC 1.3). */
   abort: () => void;
   names: () => string[];
@@ -40,6 +47,8 @@ type ToolSpec = {
   /** null for the always-on spine, which is not scoped to a target origin. */
   origin: string | null;
   fillsFrom?: string[];
+  /** Observed remote tool: execute via call_remote_tool, not a manifest name. */
+  remoteCall?: { nativeName: string };
 };
 
 const EMPTY_INPUT = {
@@ -66,8 +75,33 @@ const SPINE: ToolSpec[] = [
   {
     name: "list_remote_tools",
     description:
-      "List the WebMCP tools the site currently open in the remote browser exposes of its own. Read-only; calls none of them.",
+      "List the WebMCP tools the site currently open in the remote browser exposes of its own, with schemas. Read-only; calls none of them.",
     inputSchema: { ...EMPTY_INPUT },
+    origin: null,
+  },
+  {
+    name: "call_remote_tool",
+    description:
+      "Call a WebMCP tool the open page registered of its own, by its native name. The origin must already be granted. Prefer the origin-qualified name ChatGPT sees on this page when one exists.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Native tool name on the open page, e.g. search_catalog",
+        },
+        arguments: {
+          type: "object",
+          description: "Arguments the remote tool's own schema accepts",
+        },
+        origin: {
+          type: "string",
+          description: "https origin of the page that registered the tool",
+        },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
     origin: null,
   },
   {
@@ -120,8 +154,17 @@ export function createRegistration(opts: RegisterOpts): Registration {
         if (!ok) throw new Error("user denied: profile fields not sent");
         fills = opts.resolveFields(fillsFrom);
       }
+      if (spec.remoteCall) {
+        return opts.executeRemote("call_remote_tool", {
+          name: spec.remoteCall.nativeName,
+          arguments: { ...input, ...fills },
+          origin: spec.origin,
+        });
+      }
       return opts.executeRemote(spec.name, { ...input, ...fills });
     };
+
+  let observed: ObservedByOrigin = {};
 
   const desired = (): Map<string, ToolSpec> => {
     const out = new Map<string, ToolSpec>();
@@ -136,20 +179,35 @@ export function createRegistration(opts: RegisterOpts): Registration {
         fillsFrom: m.fillsFrom,
       });
     }
+    for (const [origin, tools] of Object.entries(observed)) {
+      if (!consented.has(origin)) continue;
+      for (const tool of tools) {
+        const name = qualifiedToolName(tool.name, origin);
+        if (out.has(name)) continue;
+        out.set(name, {
+          name,
+          description: `${tool.description} (native ${tool.name} on ${origin.replace(/^https:\/\//, "")})`,
+          inputSchema: tool.inputSchema,
+          origin,
+          remoteCall: { nativeName: tool.name },
+        });
+      }
+    }
     return out;
   };
 
-  return {
-    names: () => [...controllers.keys()],
+  let syncChain: Promise<SyncReport> = Promise.resolve({
+    registered: [],
+    removed: [],
+    failed: [],
+  });
 
-    abort: () => {
-      disposed = true;
-      for (const ac of controllers.values()) ac.abort();
-      controllers.clear();
-    },
-
-    sync: async (next) => {
+  const syncOnce = async (
+    next: ReadonlySet<string>,
+    nextObserved: ObservedByOrigin | undefined,
+  ): Promise<SyncReport> => {
       consented = next;
+      if (nextObserved) observed = nextObserved;
       const report: SyncReport = { registered: [], removed: [], failed: [] };
       if (disposed) return report;
       const want = desired();
@@ -195,6 +253,21 @@ export function createRegistration(opts: RegisterOpts): Registration {
         report.registered.push(name);
       }
       return report;
+  };
+
+  return {
+    names: () => [...controllers.keys()],
+
+    abort: () => {
+      disposed = true;
+      for (const ac of controllers.values()) ac.abort();
+      controllers.clear();
+    },
+
+    sync: (next, nextObserved) => {
+      const run = () => syncOnce(next, nextObserved);
+      syncChain = syncChain.then(run, run);
+      return syncChain;
     },
   };
 }

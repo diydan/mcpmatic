@@ -152,9 +152,14 @@ describe("POST /sessions — origin seed (happy path)", () => {
       env,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { sessionToken: string; url: string };
+    const body = (await res.json()) as {
+      sessionToken: string;
+      url: string;
+      origin: string | null;
+    };
     expect(body.sessionToken).toMatch(/^[a-f0-9]{64}$/);
     expect(body.url).toBe(`https://worker.local/s/${body.sessionToken}`);
+    expect(body.origin).toBe("https://example.com");
     // Origin was forwarded to the DO so the seed-consent path runs.
     expect(initSession).toHaveBeenCalledTimes(1);
     expect(initSession).toHaveBeenCalledWith(
