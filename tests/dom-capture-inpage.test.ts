@@ -69,3 +69,25 @@ describe("captureInPage selectors", () => {
     expect(roles).toContain("link");
   });
 });
+
+describe("captureInPage duplicate ids", () => {
+  it("does not anchor on a repeated id", async () => {
+    setBody(
+      '<div id="dupe"><button>One</button></div><div id="dupe"><button>Two</button></div>',
+    );
+    const captured = await captureInPage();
+    expect(captured.map((c) => c.name)).toEqual(["One", "Two"]);
+    for (const el of captured) {
+      // A repeated id would give both buttons the same selector, and
+      // page.click acts on the first match without erroring.
+      expect(document.querySelectorAll(el.selector)).toHaveLength(1);
+    }
+    expect(captured[0].selector).not.toBe(captured[1].selector);
+  });
+
+  it("still anchors on an id that is unique", async () => {
+    setBody('<div id="only"><button>Go</button></div>');
+    const captured = await captureInPage();
+    expect(captured[0].selector).toContain('[id="only"]');
+  });
+});

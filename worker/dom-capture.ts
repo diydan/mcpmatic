@@ -67,11 +67,32 @@ export async function captureInPage(): Promise<Array<{ role: string; name: strin
     return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
 
+  /**
+   * True only if exactly one element in the document carries this id. Real
+   * pages do repeat ids, and anchoring on a repeated one produces a selector
+   * that silently resolves to the first match: page.click does not error on
+   * a multi-match, it acts on the wrong element — after a human blessed the
+   * tool believing it targets the other one.
+   */
+  const idIsUnique = new Map<string, boolean>();
+  function uniqueId(id: string): boolean {
+    const cached = idIsUnique.get(id);
+    if (cached !== undefined) return cached;
+    let unique = false;
+    try {
+      unique = doc!.querySelectorAll(`[id="${escapeAttr(id)}"]`).length === 1;
+    } catch {
+      unique = false;
+    }
+    idIsUnique.set(id, unique);
+    return unique;
+  }
+
   function selectorFor(el: CapturedEl): string {
     const parts: string[] = [];
     let node: CapturedEl | null = el;
     while (node && node !== doc!.body) {
-      if (node.id) {
+      if (node.id && uniqueId(node.id)) {
         parts.unshift(`[id="${escapeAttr(node.id)}"]`);
         break;
       }
