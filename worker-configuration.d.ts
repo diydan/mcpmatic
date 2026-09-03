@@ -10,6 +10,12 @@ declare namespace Cloudflare {
     OAUTH_CLIENT: DurableObjectNamespace<import("./worker/oauth/client-do").OAuthClientDO>;
     OAUTH_CODE: DurableObjectNamespace<import("./worker/oauth/code-do").OAuthCodeDO>;
     OAUTH_TOKENS: KVNamespace;
+    /**
+     * Generated (and human-blessed) WebMCP manifests, keyed two ways:
+     * `origin:<origin>` for the full per-origin listing, `tool:<name>` for
+     * O(1) lookup by tool name. See worker/manifest-registry.ts.
+     */
+    MANIFEST_REGISTRY?: KVNamespace;
     BROWSER?: Fetcher;
     /**
      * AI binding. Typed as the subset we use so the model id can be any
