@@ -78,6 +78,14 @@ export default {
       return json({ ok: true, consent: claimed.consent });
     }
 
+    // WebAuthn ceremony. Not under /s/<token>: a login happens *before* there
+    // is a session to speak of, and registration binds an authenticator to the
+    // account rather than to whichever session is open.
+    if (path.startsWith("/account/passkey/")) {
+      const { handlePasskey } = await import("./passkey-routes");
+      return handlePasskey(request, env, path.slice("/account/passkey/".length));
+    }
+
     if (path === "/mcp") {
       const { handleMcp } = await import("./mcp/server");
       return handleMcp(request, env);

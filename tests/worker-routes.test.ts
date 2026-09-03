@@ -48,6 +48,15 @@ vi.mock("../worker/oauth/token", () => {
   );
   return { handleToken };
 });
+vi.mock("../worker/passkey-routes", () => {
+  const handlePasskey = vi.fn(async (req: Request, _e: unknown, sub: string) =>
+    new Response(JSON.stringify({ stubbed: "passkey", sub, url: req.url }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  return { handlePasskey };
+});
 vi.mock("../worker/mcp/server", () => {
   const handleMcp = vi.fn(async (req: Request) =>
     new Response(JSON.stringify({ stubbed: "mcp", url: req.url }), {
@@ -350,5 +359,38 @@ describe("GET /s/:token/audit", () => {
     );
     expect(res.status).toBe(404);
     expect(env.__listHistory).not.toHaveBeenCalled();
+  });
+});
+
+describe("/account/passkey/*", () => {
+  it("dispatches each ceremony step to the passkey handler", async () => {
+    const { handlePasskey } = await import("../worker/passkey-routes");
+    for (const sub of [
+      "register/options",
+      "register/verify",
+      "login/options",
+      "login/verify",
+    ]) {
+      const res = await worker.fetch!(
+        new Request(`https://worker.local/account/passkey/${sub}`, {
+          method: "POST",
+        }),
+        makeEnv(),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ stubbed: "passkey", sub });
+    }
+    expect(handlePasskey).toHaveBeenCalledTimes(4);
+  });
+
+  it("404s an unknown account path without calling the handler", async () => {
+    const { handlePasskey } = await import("../worker/passkey-routes");
+    vi.mocked(handlePasskey).mockClear();
+    const res = await worker.fetch!(
+      new Request("https://worker.local/account/nope", { method: "POST" }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(404);
+    expect(handlePasskey).not.toHaveBeenCalled();
   });
 });

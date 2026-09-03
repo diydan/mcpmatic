@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { unionOrigins } from "../shared/origin";
 import { AUDIT_DDL, type AuditRow } from "../shared/protocol";
 import { toAuditRows, type StoredAuditRow } from "./audit-rows";
+import type { StoredCredential } from "./passkey";
 
 /**
  * The durable half of a session.
@@ -26,6 +27,19 @@ export class AccountDO extends DurableObject<Env> {
       // ts}, no value column, ever. The durable copy of a log that must not be
       // able to hold a value is still a log that cannot hold one.
       this.ctx.storage.sql.exec(AUDIT_DDL);
+      // A passkey binds this account to an authenticator, so it survives
+      // cleared storage and reaches a second device. Public keys only — a
+      // passkey's private half never leaves the user's device, which is why
+      // this table is not a secret store.
+      this.ctx.storage.sql.exec(
+        `CREATE TABLE IF NOT EXISTS credentials (
+           id TEXT PRIMARY KEY,
+           public_key TEXT NOT NULL,
+           counter INTEGER NOT NULL,
+           transports TEXT,
+           created_at INTEGER NOT NULL
+         )`,
+      );
       this.ctx.storage.sql.exec(
         `CREATE TABLE IF NOT EXISTS sessions (
            token TEXT PRIMARY KEY,
@@ -110,6 +124,73 @@ export class AccountDO extends DurableObject<Env> {
         )
         .toArray(),
     );
+  }
+
+  async addCredential(c: StoredCredential): Promise<{ ok: true }> {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO credentials (id, public_key, counter, transports, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET counter = excluded.counter`,
+      c.id,
+      c.publicKey,
+      c.counter,
+      c.transports ? JSON.stringify(c.transports) : null,
+      Date.now(),
+    );
+    return { ok: true };
+  }
+
+  async getCredential(id: string): Promise<StoredCredential | null> {
+    const row = this.ctx.storage.sql
+      .exec<{
+        id: string;
+        public_key: string;
+        counter: number;
+        transports: string | null;
+      }>(
+        `SELECT id, public_key, counter, transports FROM credentials WHERE id = ? LIMIT 1`,
+        id,
+      )
+      .toArray()[0];
+    if (!row) return null;
+    let transports: string[] | undefined;
+    if (row.transports) {
+      try {
+        const parsed = JSON.parse(row.transports) as unknown;
+        if (Array.isArray(parsed)) {
+          transports = parsed.filter((x): x is string => typeof x === "string");
+        }
+      } catch {
+        /* a row with unreadable transports is still a usable credential */
+      }
+    }
+    return {
+      id: row.id,
+      publicKey: row.public_key,
+      counter: row.counter,
+      transports,
+    };
+  }
+
+  /**
+   * The signature counter is replay protection: an authenticator that reports
+   * a counter no higher than the last one may be a clone. Only ever moves up.
+   */
+  async setCredentialCounter(id: string, counter: number): Promise<void> {
+    this.ctx.storage.sql.exec(
+      `UPDATE credentials SET counter = ? WHERE id = ? AND counter < ?`,
+      counter,
+      id,
+      counter,
+    );
+  }
+
+  async hasCredentials(): Promise<boolean> {
+    return (
+      this.ctx.storage.sql
+        .exec<{ n: number }>(`SELECT COUNT(*) AS n FROM credentials`)
+        .toArray()[0]?.n ?? 0
+    ) > 0;
   }
 
   async listSessions(): Promise<string[]> {

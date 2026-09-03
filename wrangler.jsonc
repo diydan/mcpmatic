@@ -13,6 +13,7 @@
       "/s/*/consent",
       "/s/*/account",
       "/s/*/audit",
+      "/account/passkey/*",
       "/mcp",
       "/oauth/*"
     ]

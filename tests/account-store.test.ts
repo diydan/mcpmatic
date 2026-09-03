@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensureAccountId } from "../src/lib/account-store";
+import { adoptAccountId, ensureAccountId } from "../src/lib/account-store";
 import { isAccountId } from "../worker/account";
 
 function fakeStorage(initial?: Record<string, string>) {
@@ -48,5 +48,46 @@ describe("ensureAccountId", () => {
       setItem: () => {},
     });
     expect(id).toBeNull();
+  });
+});
+
+describe("adoptAccountId", () => {
+  it("stores a well-formed id from a passkey login", () => {
+    const store = fakeStorage();
+    const id = "c".repeat(64);
+    expect(adoptAccountId(store, id)).toBe(true);
+    expect(ensureAccountId(store)).toBe(id);
+  });
+
+  it("replaces the id this browser generated for itself", () => {
+    // Signing in on a second browser must adopt the account the passkey names,
+    // not keep the local one — otherwise the grants stay invisible.
+    const store = fakeStorage();
+    const local = ensureAccountId(store);
+    const fromPasskey = "d".repeat(64);
+    adoptAccountId(store, fromPasskey);
+    expect(ensureAccountId(store)).toBe(fromPasskey);
+    expect(ensureAccountId(store)).not.toBe(local);
+  });
+
+  it("refuses a malformed id rather than overwriting a good one", () => {
+    const store = fakeStorage();
+    const good = ensureAccountId(store);
+    expect(adoptAccountId(store, "nope")).toBe(false);
+    expect(ensureAccountId(store)).toBe(good);
+  });
+
+  it("reports failure when storage is unavailable", () => {
+    expect(
+      adoptAccountId(
+        {
+          getItem: () => null,
+          setItem: () => {
+            throw new Error("blocked");
+          },
+        },
+        "e".repeat(64),
+      ),
+    ).toBe(false);
   });
 });

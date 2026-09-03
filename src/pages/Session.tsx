@@ -25,6 +25,7 @@ import { Surface } from "../components/Surface";
 import { profileStore, seedIfEmpty } from "../lib/profile-store";
 import { answerApproval } from "../lib/approval-reply";
 import { accountId } from "../lib/account-store";
+import { PasskeyBar } from "../components/PasskeyBar";
 import { unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
@@ -544,6 +545,31 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             ]);
           }}
         />
+        {isConsole ? (
+          <PasskeyBar
+            accountId={accountId()}
+            onSignedIn={(id) => {
+              // Adopting a different account means different grants. Re-claim
+              // this session under it and take what comes back.
+              void (async () => {
+                const res = await fetch(`/s/${sessionToken}/account`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ accountId: id }),
+                });
+                if (!res.ok) return;
+                const body = (await res.json()) as { consent?: unknown };
+                if (!Array.isArray(body.consent)) return;
+                const next = new Set(
+                  body.consent.filter((x): x is string => typeof x === "string"),
+                );
+                setConsented(next);
+                const reg = registrationRef.current;
+                if (reg) await syncTools(reg, next, observedRef.current);
+              })();
+            }}
+          />
+        ) : null}
         <Surface
           origin={pageOrigin}
           remoteTools={remoteTools}

@@ -35,6 +35,27 @@ export function ensureAccountId(storage: MinimalStorage): string | null {
   }
 }
 
+/**
+ * Take on the account a passkey login named.
+ *
+ * This is the whole point of the passkey: on a second browser, or after
+ * storage is cleared, the id generated locally is not the one holding the
+ * grants. Adopting replaces it. A malformed id is refused rather than allowed
+ * to overwrite a working one.
+ */
+export function adoptAccountId(
+  storage: MinimalStorage,
+  id: string,
+): boolean {
+  if (!isWellFormed(id)) return false;
+  try {
+    storage.setItem(KEY, id);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function accountId(): string | null {
   if (typeof localStorage === "undefined") return null;
   return ensureAccountId(localStorage);
