@@ -88,6 +88,11 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
    * denied rather than replacing it — replacing would strand whoever is
    * waiting on the first, and there is only one human here to answer anyway.
    */
+  /** Close a dialog the server has stopped waiting on, freeing the slot. */
+  const dismissBless = useCallback(() => {
+    blessWait.current = null;
+    setBless(null);
+  }, []);
   const askBless = useCallback(
     (req: BlessRequest) =>
       new Promise<boolean>((resolve) => {
@@ -289,6 +294,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           void answerApproval(msg, {
             bless: askBless,
             resolveFields: (paths) => profileStore.resolve(paths),
+            dismiss: dismissBless,
           }).then((reply) => bridgeRef.current?.send(reply));
         }
         if (msg.type === "assistant") {

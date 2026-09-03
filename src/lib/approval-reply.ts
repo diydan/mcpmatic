@@ -6,11 +6,15 @@ type ApprovalRequest = {
   origin: string;
   tool: string;
   fieldNames: string[];
+  /** When the server stops waiting. Absent on older servers. */
+  expiresAt?: number;
 };
 
 type Deps = {
   bless: (req: BlessRequest) => Promise<boolean>;
   resolveFields: (paths: readonly string[]) => Record<string, string>;
+  /** Close a dialog the server has stopped waiting on. */
+  dismiss?: () => void;
 };
 
 /**
@@ -33,14 +37,17 @@ export async function answerApproval(
     id: req.id,
     ok: false,
   } as const;
+  // A request the server has already given up on must not raise a dialog: a
+  // click on it can do nothing, and a control that does nothing is worse than
+  // no control at all.
+  const remaining = req.expiresAt ? req.expiresAt - Date.now() : null;
+  if (remaining !== null && remaining <= 0) return deny;
+
   let ok = false;
   try {
-    ok = await deps.bless({
-      origin: req.origin,
-      tool: req.tool,
-      fieldNames: req.fieldNames,
-      destination: req.origin,
-    });
+    ok = remaining === null
+      ? await deps.bless(blessRequest(req))
+      : await raceDeadline(deps.bless(blessRequest(req)), remaining, deps.dismiss);
   } catch {
     return deny;
   }
@@ -52,4 +59,42 @@ export async function answerApproval(
     ok: true,
     fills: deps.resolveFields(req.fieldNames),
   };
+}
+
+function blessRequest(req: ApprovalRequest): BlessRequest {
+  return {
+    origin: req.origin,
+    tool: req.tool,
+    fieldNames: req.fieldNames,
+    destination: req.origin,
+  };
+}
+
+/**
+ * Whichever comes first: the human, or the server's deadline.
+ *
+ * On expiry the dialog is closed rather than left standing. It was showing a
+ * question nobody is waiting for the answer to.
+ */
+function raceDeadline(
+  decision: Promise<boolean>,
+  ms: number,
+  dismiss?: () => void,
+): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      dismiss?.();
+      resolve(false);
+    }, ms);
+    void decision.then(
+      (ok) => {
+        clearTimeout(timer);
+        resolve(ok);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(false);
+      },
+    );
+  });
 }

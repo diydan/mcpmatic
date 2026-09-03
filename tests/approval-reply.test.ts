@@ -69,3 +69,56 @@ describe("answerApproval", () => {
     expect(msg).toEqual({ v: 1, type: "approval_result", id: "req-1", ok: false });
   });
 });
+
+describe("answerApproval respects the deadline the server set", () => {
+  const soon = { ...REQ, expiresAt: 0 };
+
+  it("does not ask a human about a request that has already expired", async () => {
+    // The server has stopped waiting. Raising a dialog here invites a click
+    // that can do nothing, which is worse than no dialog.
+    const bless = vi.fn(async () => true);
+    const dismiss = vi.fn();
+    const msg = await answerApproval(
+      { ...soon, expiresAt: Date.now() - 1 },
+      { ...deps(bless), dismiss },
+    );
+    expect(bless).not.toHaveBeenCalled();
+    expect(msg.ok).toBe(false);
+  });
+
+  it("closes the dialog when the deadline passes with no answer", async () => {
+    vi.useFakeTimers();
+    try {
+      const dismiss = vi.fn();
+      const pending = answerApproval(
+        { ...REQ, expiresAt: Date.now() + 10_000 },
+        { ...deps(() => new Promise<boolean>(() => {})), dismiss },
+      );
+      await vi.advanceTimersByTimeAsync(10_001);
+      await expect(pending).resolves.toEqual({
+        v: 1,
+        type: "approval_result",
+        id: "req-1",
+        ok: false,
+      });
+      expect(dismiss).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still approves normally when the human answers in time", async () => {
+    const dismiss = vi.fn();
+    const msg = await answerApproval(
+      { ...REQ, expiresAt: Date.now() + 10_000 },
+      { ...deps(async () => true), dismiss },
+    );
+    expect(msg.ok).toBe(true);
+    expect(dismiss).not.toHaveBeenCalled();
+  });
+
+  it("works when the server sent no deadline at all", async () => {
+    const msg = await answerApproval(REQ, { ...deps(async () => true), dismiss: vi.fn() });
+    expect(msg.ok).toBe(true);
+  });
+});
