@@ -23,6 +23,7 @@ import {
 } from "../lib/register-all";
 import { Surface } from "../components/Surface";
 import { profileStore, seedIfEmpty } from "../lib/profile-store";
+import { answerApproval } from "../lib/approval-reply";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
 import { navigationHref, normaliseOrigin } from "../../shared/origin";
@@ -71,6 +72,23 @@ export function Session() {
   const [autonomous, setAutonomous] = useState(false);
   const [bless, setBless] = useState<BlessRequest | null>(null);
   const blessWait = useRef<((ok: boolean) => void) | null>(null);
+  /**
+   * One dialog at a time. A second request arriving while one is open is
+   * denied rather than replacing it — replacing would strand whoever is
+   * waiting on the first, and there is only one human here to answer anyway.
+   */
+  const askBless = useCallback(
+    (req: BlessRequest) =>
+      new Promise<boolean>((resolve) => {
+        if (blessWait.current) {
+          resolve(false);
+          return;
+        }
+        blessWait.current = resolve;
+        setBless(req);
+      }),
+    [],
+  );
   const bridgeRef = useRef<ReturnType<typeof openBridge> | null>(null);
   const registrationRef = useRef<Registration | null>(null);
   const consentedRef = useRef(consented);
@@ -224,6 +242,15 @@ export function Session() {
           }
         }
         if (msg.type === "audit") setAudit(msg.rows);
+        if (msg.type === "approval_request") {
+          // A tool call is suspended on the DO waiting for this. The profile
+          // lives here and nowhere else, so this is the only place that can
+          // answer it.
+          void answerApproval(msg, {
+            bless: askBless,
+            resolveFields: (paths) => profileStore.resolve(paths),
+          }).then((reply) => bridgeRef.current?.send(reply));
+        }
         if (msg.type === "assistant") {
           setLines((l) => [...l, { kind: "assistant", text: msg.content }]);
           setBusy(false);
@@ -282,11 +309,7 @@ export function Session() {
         return live.exec(name, args);
       },
       resolveFields: (paths) => profileStore.resolve(paths),
-      bless: (req) =>
-        new Promise((resolve) => {
-          blessWait.current = resolve;
-          setBless(req);
-        }),
+      bless: askBless,
     });
     registrationRef.current = registration;
     void syncTools(
