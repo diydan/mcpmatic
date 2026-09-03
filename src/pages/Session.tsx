@@ -46,7 +46,15 @@ function originFromNavState(state: unknown): string | null {
   return typeof origin === "string" && origin ? origin : null;
 }
 
-export function Session() {
+type SessionRole = "console" | "facade";
+
+/**
+ * `console` is the human at `/c/<token>`: it holds the profile and answers
+ * approvals. `facade` is `/s/<token>`, loaded by an agent — it registers tools
+ * and is never asked to release a field on the human's behalf.
+ */
+export function Session({ role = "facade" }: { role?: SessionRole }) {
+  const isConsole = role === "console";
   const { sessionToken = "" } = useParams();
   const seededFromNav = originFromNavState(useLocation().state);
   const [tools, setTools] = useState<ToolSchema[]>([]);
@@ -242,7 +250,7 @@ export function Session() {
           }
         }
         if (msg.type === "audit") setAudit(msg.rows);
-        if (msg.type === "approval_request") {
+        if (msg.type === "approval_request" && isConsole) {
           // A tool call is suspended on the DO waiting for this. The profile
           // lives here and nowhere else, so this is the only place that can
           // answer it.
@@ -295,7 +303,7 @@ export function Session() {
           })();
         }
       },
-    });
+    }, role);
     bridgeRef.current = bridge;
 
     // Created synchronously so the cleanup below can always abort it, even if
@@ -308,8 +316,10 @@ export function Session() {
         if (!live) return Promise.reject(new Error("no bridge"));
         return live.exec(name, args);
       },
-      resolveFields: (paths) => profileStore.resolve(paths),
-      bless: askBless,
+      // The façade holds no profile. A fillsFrom tool still registers there;
+      // the DO suspends it and the console supplies the fields.
+      resolveFields: isConsole ? (paths) => profileStore.resolve(paths) : undefined,
+      bless: isConsole ? askBless : undefined,
     });
     registrationRef.current = registration;
     void syncTools(

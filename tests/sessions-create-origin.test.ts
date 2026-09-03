@@ -107,6 +107,23 @@ describe("POST /sessions — back-compat (no body)", () => {
     expect(initSession).toHaveBeenCalledWith(body.sessionToken, undefined);
   });
 
+  it("returns the console url alongside the façade url", async () => {
+    // `url` is what an agent loads. A human needs /c/<token>: it is the only
+    // view that can answer an approval.
+    const { env } = makeEnv();
+    const res = await worker.fetch!(
+      req("https://worker.local/sessions", { method: "POST" }),
+      env,
+    );
+    const body = (await res.json()) as {
+      sessionToken: string;
+      url: string;
+      consoleUrl: string;
+    };
+    expect(body.url).toBe(`https://worker.local/s/${body.sessionToken}`);
+    expect(body.consoleUrl).toBe(`https://worker.local/c/${body.sessionToken}`);
+  });
+
   it("application/json body with empty object {} → 200, initSession(token) without origin", async () => {
     const { env, initSession } = makeEnv();
     const res = await worker.fetch!(

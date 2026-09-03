@@ -46,6 +46,7 @@ import {
   prepareFills,
   stripProfilePaths,
 } from "./approval";
+import { parseBridgeRole } from "./bridge-role";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 /**
@@ -91,7 +92,9 @@ export class SessionDO extends DurableObject<Env> {
   private pending: PendingTurn | null = null;
   private driving = false;
   private readonly approvals = new ApprovalGate({
-    hasConsole: () => this.ctx.getWebSockets().length > 0,
+    // Console sockets only. A façade socket belongs to an agent, and asking
+    // it to approve would put the dialog somewhere no human is reading.
+    hasConsole: () => this.ctx.getWebSockets("console").length > 0,
     send: (req) => this.broadcast({ v: 1, type: "approval_request", ...req }),
     timeoutMs: APPROVAL_TIMEOUT_MS,
   });
@@ -349,11 +352,14 @@ export class SessionDO extends DurableObject<Env> {
     } catch {
       /* already closing */
     }
+    // Nobody left who could answer. Settle now rather than making each
+    // suspended call sit out its 45 seconds. A façade socket closing does not
+    // count — it was never going to answer.
+    if (this.ctx.getWebSockets("console").every((s) => s === ws)) {
+      this.approvals.abandonAll();
+    }
     const remaining = this.ctx.getWebSockets().filter((s) => s !== ws);
     if (remaining.length > 0) return;
-    // Nobody left to answer. Settle now rather than making each suspended call
-    // sit out its 45 seconds.
-    this.approvals.abandonAll();
     // Grace, not immediate teardown: a refresh must not cost the user the
     // login they just completed inside the viewport.
     const at = this.createdAt();
@@ -363,7 +369,7 @@ export class SessionDO extends DurableObject<Env> {
     );
   }
 
-  private async acceptBridge(_request: Request): Promise<Response> {
+  private async acceptBridge(request: Request): Promise<Response> {
     if (!this.createdAt()) {
       this.ctx.storage.sql.exec(
         `INSERT INTO meta (key, value) VALUES ('createdAt', ?)
@@ -374,12 +380,19 @@ export class SessionDO extends DurableObject<Env> {
     if (this.expired()) {
       return new Response("session expired", { status: 410 });
     }
-    for (const existing of this.ctx.getWebSockets()) {
+    const role = parseBridgeRole(request.url);
+    // Replace only a socket of the same role. A console and a façade are two
+    // views of one session and must coexist — the agent is on the façade while
+    // the human watches and approves on the console. Closing all of them, as
+    // this did when there was only one view, would mean opening the console
+    // disconnected the agent.
+    for (const existing of this.ctx.getWebSockets(role)) {
       existing.close(4000, "replaced");
     }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-    this.ctx.acceptWebSocket(server);
+    // Tagged at accept time so `getWebSockets("console")` can find the human.
+    this.ctx.acceptWebSocket(server, [role]);
     await this.armTtlAlarm();
     this.send(server, {
       v: 1,
