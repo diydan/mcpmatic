@@ -9,13 +9,20 @@ export type BridgeHandlers = {
 export function openBridge(
   sessionToken: string,
   handlers: BridgeHandlers,
+  /**
+   * Declared at connect so the DO can tag the socket. Only a `console` socket
+   * is ever sent an approval — see worker/bridge-role.ts.
+   */
+  role: "console" | "facade" = "facade",
 ): {
   send: (msg: ClientMessage) => void;
   close: () => void;
   exec: (name: string, args: Record<string, unknown>) => Promise<string>;
 } {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${proto}//${location.host}/s/${sessionToken}/bridge`);
+  const ws = new WebSocket(
+    `${proto}//${location.host}/s/${sessionToken}/bridge?role=${role}`,
+  );
   const pending = new Map<
     string,
     { resolve: (s: string) => void; reject: (e: Error) => void }

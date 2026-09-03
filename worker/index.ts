@@ -125,7 +125,10 @@ async function createSession(request: Request, env: Env): Promise<Response> {
   const origin = new URL(request.url).origin;
   return json({
     sessionToken,
+    // What an agent loads: registers the tools, holds no profile.
     url: `${origin}/s/${sessionToken}`,
+    // What a human opens: the only view that can answer an approval.
+    consoleUrl: `${origin}/c/${sessionToken}`,
     origin: seededOrigin ?? null,
   });
 }

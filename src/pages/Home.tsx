@@ -54,7 +54,7 @@ export function Home() {
                 sessionToken: string;
                 origin?: string | null;
               };
-              nav(`/s/${sessionToken}`, {
+              nav(`/c/${sessionToken}`, {
                 state: { origin: granted || undefined },
               });
             } catch {
