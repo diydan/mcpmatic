@@ -56,6 +56,13 @@ export type ApprovalRequestPayload = {
   expiresAt: number;
 };
 
+export type BoundedOutcome =
+  | { status: "approved"; fills: Record<string, string> }
+  | { status: "denied" }
+  | { status: "needs-console" }
+  /** Not answered in the inline window. Collect it later with this id. */
+  | { status: "pending"; id: string };
+
 export type ApprovalOutcome =
   | { ok: true; fills: Record<string, string> }
   | {
@@ -97,7 +104,14 @@ export class ApprovalGate {
     if (!this.opts.hasConsole()) {
       return Promise.resolve({ ok: false, reason: "needs-console" });
     }
-    const id = crypto.randomUUID();
+    return this.open(crypto.randomUUID(), input);
+  }
+
+  /** Publish a request and return the promise its answer will settle. */
+  private open(
+    id: string,
+    input: { origin: string; tool: string; fieldNames: string[] },
+  ): Promise<ApprovalOutcome> {
     const expiresAt = Date.now() + this.opts.timeoutMs;
     return new Promise<ApprovalOutcome>((resolve) => {
       const timer = setTimeout(() => {
@@ -107,6 +121,54 @@ export class ApprovalGate {
       this.pending.set(id, { fieldNames: input.fieldNames, resolve, timer });
       this.opts.send({ id, expiresAt, ...input });
     });
+  }
+
+  /**
+   * Wait a little, then hand back a handle instead of holding the caller open.
+   *
+   * A human decision has no upper bound, and an MCP request does: the SDK's
+   * default is 60 seconds. Blocking for the whole approval window spends the
+   * client's entire budget on one call and — worse — leaves the request
+   * exposed for that whole time to a Durable Object reset, which orphans it.
+   * A reset destroys the pending map, the resolve callbacks and the timer at
+   * once, and the caller waits until the platform errors it. That is not
+   * hypothetical; it is what a deployed run did.
+   *
+   * So: wait `inlineMs`, which covers the case that actually matters — the
+   * human is watching the console and clicks in a few seconds. If they are not
+   * there, return the id. The request stays live; when it is finally answered
+   * or expires, `onLate` runs the work and the caller collects the result by
+   * id.
+   *
+   * Nothing is blocked on the expiry timer any more, which is why a plain
+   * `setTimeout` is adequate here despite the rest of this class living in a
+   * Durable Object: if a reset takes the timer, no caller is waiting on it.
+   */
+  async requestBounded(
+    input: { origin: string; tool: string; fieldNames: string[] },
+    inlineMs: number,
+    onLate: (outcome: ApprovalOutcome, id: string) => Promise<void>,
+  ): Promise<BoundedOutcome> {
+    if (!this.opts.hasConsole()) return { status: "needs-console" };
+    const id = crypto.randomUUID();
+    const settled = this.open(id, input);
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const elapsed = new Promise<"inline-expired">((resolve) => {
+      timer = setTimeout(() => resolve("inline-expired"), inlineMs);
+    });
+    const first = await Promise.race([settled, elapsed]);
+    if (timer !== undefined) clearTimeout(timer);
+
+    if (first !== "inline-expired") {
+      if (first.ok) return { status: "approved", fills: first.fills };
+      return first.reason === "denied"
+        ? { status: "denied" }
+        : { status: "needs-console" };
+    }
+    // Hand the caller a receipt and let the decision land later.
+    void settled.then((outcome) => onLate(outcome, id));
+    return { status: "pending", id };
   }
 
   /**

@@ -5,6 +5,7 @@ import {
   missingFills,
   prepareFills,
   stripProfilePaths,
+  type ApprovalOutcome,
   type ApprovalRequestPayload,
 } from "../worker/approval";
 
@@ -290,5 +291,100 @@ describe("prepareFills", () => {
     const { g, sent } = gate();
     void prepareFills(FILLS, { "address.line1": "already here" }, g);
     expect(sent[0].fieldNames).toEqual(["address.postcode"]);
+  });
+});
+
+describe("ApprovalGate hands back a resumable id rather than hanging", () => {
+  const INLINE = 10_000;
+
+  function bounded(opts: { hasConsole?: () => boolean } = {}) {
+    const sent: ApprovalRequestPayload[] = [];
+    const late: ApprovalOutcome[] = [];
+    const g = new ApprovalGate({
+      hasConsole: opts.hasConsole ?? (() => true),
+      send: (req) => sent.push(req),
+      timeoutMs: 45_000,
+    });
+    const run = () => g.requestBounded(ASK, INLINE, async (o) => void late.push(o));
+    const approve = (fills: Record<string, string>) =>
+      g.settle(sent[0].id, true, fills);
+    return { g, sent, late, run, approve };
+  }
+
+  it("returns needs-console when nobody could answer", async () => {
+    const { run } = bounded({ hasConsole: () => false });
+    await expect(run()).resolves.toEqual({ status: "needs-console" });
+  });
+
+  it("answers inline when the human is right there", async () => {
+    const { run, approve } = bounded();
+    const pending = run();
+    approve({ "address.line1": "14 Rivington Street" });
+    await expect(pending).resolves.toEqual({
+      status: "approved",
+      fills: { "address.line1": "14 Rivington Street" },
+    });
+  });
+
+  it("reports a denial inline rather than as pending", async () => {
+    const { g, sent, run } = bounded();
+    const pending = run();
+    g.settle(sent[0].id, false);
+    await expect(pending).resolves.toEqual({ status: "denied" });
+  });
+
+  it("returns a resumable id once the inline window closes", async () => {
+    vi.useFakeTimers();
+    try {
+      const { run, late } = bounded();
+      const pending = run();
+      await vi.advanceTimersByTimeAsync(INLINE + 1);
+      const out = await pending;
+      expect(out.status).toBe("pending");
+      expect(out.status === "pending" && out.id.length > 0).toBe(true);
+      // Still live: nothing has been decided, so no continuation has run.
+      expect(late).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs the continuation when the human answers after the window", async () => {
+    vi.useFakeTimers();
+    try {
+      const { run, approve, late } = bounded();
+      const pending = run();
+      await vi.advanceTimersByTimeAsync(INLINE + 1);
+      await pending;
+      approve({ "address.line1": "14 Rivington Street" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(late).toEqual([
+        { ok: true, fills: { "address.line1": "14 Rivington Street" } },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs the continuation on expiry, so a pending id always resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      const { run, late } = bounded();
+      const pending = run();
+      await vi.advanceTimersByTimeAsync(INLINE + 1);
+      await pending;
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(late).toEqual([{ ok: false, reason: "timeout" }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never runs the continuation for a call answered inline", async () => {
+    const { run, approve, late } = bounded();
+    const pending = run();
+    approve({ "address.line1": "x" });
+    await pending;
+    expect(late).toEqual([]);
   });
 });
