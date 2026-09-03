@@ -27,9 +27,26 @@ export default {
     }
 
     const consentMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/consent$/);
+    // Grant and revoke share one expiry rule: a session past its TTL answers
+    // 410, the same status the bridge returns. The DO throws; the worker
+    // translates, because status codes are a worker concern.
+    const withExpiry = async <T>(
+      run: () => Promise<T>,
+    ): Promise<T | Response> => {
+      try {
+        return await run();
+      } catch (err) {
+        if (err instanceof Error && err.message === "session expired") {
+          return json({ ok: false, error: "session expired" }, 410);
+        }
+        throw err;
+      }
+    };
     if (consentMatch && request.method === "GET") {
       const stub = env.SESSION.getByName(consentMatch[1]);
-      return json(await stub.listConsent());
+      const listed = await withExpiry(() => stub.listConsent());
+      if (listed instanceof Response) return listed;
+      return json(listed);
     }
     if (consentMatch && request.method === "POST") {
       const body = (await request.json()) as { origin?: unknown };
@@ -44,7 +61,8 @@ export default {
         return json({ ok: false, error: "origin must be https" }, 400);
       }
       const stub = env.SESSION.getByName(consentMatch[1]);
-      await stub.grantConsent(origin);
+      const granted = await withExpiry(() => stub.grantConsent(origin));
+      if (granted instanceof Response) return granted;
       return json({ ok: true, origin });
     }
     if (consentMatch && request.method === "DELETE") {
@@ -62,7 +80,8 @@ export default {
         return json({ ok: false, error: "origin must be https" }, 400);
       }
       const stub = env.SESSION.getByName(consentMatch[1]);
-      const revoked = await stub.revokeConsent(origin);
+      const revoked = await withExpiry(() => stub.revokeConsent(origin));
+      if (revoked instanceof Response) return revoked;
       return json({ ok: true, consent: revoked.consent });
     }
 

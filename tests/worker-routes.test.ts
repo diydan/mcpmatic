@@ -100,6 +100,8 @@ import worker from "../worker/index";
 function makeEnv(): Env & {
   __claimAccount: ReturnType<typeof vi.fn>;
   __revokeConsent: ReturnType<typeof vi.fn>;
+  __grantConsent: ReturnType<typeof vi.fn>;
+  __listConsent: ReturnType<typeof vi.fn>;
   __listHistory: ReturnType<typeof vi.fn>;
   __sessionGetByName: ReturnType<typeof vi.fn>;
   __oauthClientGetByName: ReturnType<typeof vi.fn>;
@@ -113,6 +115,11 @@ function makeEnv(): Env & {
     ok: true,
     consent: [],
   }));
+  const grantConsent = vi.fn(async (_origin: string) => ({ ok: true }));
+  const listConsent = vi.fn(async () => ({
+    consent: ["https://www.allbirds.com"],
+    autonomous: false,
+  }));
   const listHistory = vi.fn(async () => [
     {
       origin: "https://www.allbirds.com",
@@ -125,6 +132,8 @@ function makeEnv(): Env & {
     initSession: async (_token: string) => {},
     claimAccount,
     revokeConsent,
+    grantConsent,
+    listConsent,
     listHistory,
     fetch: async (_req: Request) => new Response(null, { status: 200 }),
   }));
@@ -141,12 +150,16 @@ function makeEnv(): Env & {
     __sessionGetByName: sessionGetByName,
     __claimAccount: claimAccount,
     __revokeConsent: revokeConsent,
+    __grantConsent: grantConsent,
+    __listConsent: listConsent,
     __listHistory: listHistory,
     __oauthClientGetByName: oauthClientGetByName,
     __oauthCodeGetByName: oauthCodeGetByName,
   } as unknown as Env & {
     __claimAccount: ReturnType<typeof vi.fn>;
     __revokeConsent: ReturnType<typeof vi.fn>;
+    __grantConsent: ReturnType<typeof vi.fn>;
+    __listConsent: ReturnType<typeof vi.fn>;
     __listHistory: ReturnType<typeof vi.fn>;
     __sessionGetByName: ReturnType<typeof vi.fn>;
     __oauthClientGetByName: ReturnType<typeof vi.fn>;
@@ -373,6 +386,77 @@ describe("DELETE /s/:token/consent", () => {
     const res = await worker.fetch!(del({ origin: "not a url" }), env);
     expect(res.status).toBe(400);
     expect(env.__revokeConsent).not.toHaveBeenCalled();
+  });
+});
+
+describe("consent routes — session expiry (P1.2)", () => {
+  const TOKEN = "a".repeat(64);
+  const expiredErr = new Error("session expired");
+
+  function expiredEnv(): Env & {
+    __revokeConsent: ReturnType<typeof vi.fn>;
+    __grantConsent: ReturnType<typeof vi.fn>;
+    __listConsent: ReturnType<typeof vi.fn>;
+  } {
+    const env = makeEnv();
+    env.__revokeConsent.mockRejectedValue(expiredErr);
+    env.__grantConsent.mockRejectedValue(expiredErr);
+    env.__listConsent.mockRejectedValue(expiredErr);
+    return env as unknown as typeof env;
+  }
+
+  it("POST /s/:token/consent answers 410 on an expired session", async () => {
+    const env = expiredEnv();
+    const res = await worker.fetch!(
+      new Request(`https://worker.local/s/${TOKEN}/consent`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ origin: "https://www.allbirds.com" }),
+      }),
+      env as unknown as Env,
+    );
+    expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({ ok: false, error: "session expired" });
+  });
+
+  it("DELETE /s/:token/consent answers 410 on an expired session", async () => {
+    const env = expiredEnv();
+    const res = await worker.fetch!(
+      new Request(`https://worker.local/s/${TOKEN}/consent`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ origin: "https://www.allbirds.com" }),
+      }),
+      env as unknown as Env,
+    );
+    expect(res.status).toBe(410);
+  });
+
+  it("GET /s/:token/consent answers 410 on an expired session", async () => {
+    const env = expiredEnv();
+    const res = await worker.fetch!(
+      new Request(`https://worker.local/s/${TOKEN}/consent`),
+      env as unknown as Env,
+    );
+    expect(res.status).toBe(410);
+  });
+
+  it("an unexpected DO error is not swallowed as expiry", async () => {
+    const env = makeEnv();
+    env.__grantConsent.mockRejectedValue(new Error("storage down"));
+    // The worker rethrows what it cannot classify; the runtime turns that
+    // into a 500. Assert the rejection escapes rather than asserting a
+    // status the worker itself never produces.
+    await expect(
+      worker.fetch!(
+        new Request(`https://worker.local/s/${TOKEN}/consent`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ origin: "https://www.allbirds.com" }),
+        }),
+        env as unknown as Env,
+      ),
+    ).rejects.toThrow("storage down");
   });
 });
 

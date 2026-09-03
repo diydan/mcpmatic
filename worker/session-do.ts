@@ -158,6 +158,15 @@ export class SessionDO extends DurableObject<Env> {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
         token,
       );
+      // The clock starts at mint, not at first bridge accept: a façade URL
+      // nobody ever opened is still a session whose consent must not outlive
+      // two hours. DO NOTHING keeps a replay of POST /sessions from resetting
+      // a clock that is already running.
+      this.ctx.storage.sql.exec(
+        `INSERT INTO meta (key, value) VALUES ('createdAt', ?)
+         ON CONFLICT(key) DO NOTHING`,
+        String(Date.now()),
+      );
       if (origin) {
         // Mirrors `grantConsent`'s storage shape: a single meta row
         // holding the JSON array of consented origins. The seed path is
@@ -206,6 +215,9 @@ export class SessionDO extends DurableObject<Env> {
    * when an origin was pre-seeded via POST /sessions. Idempotent.
    */
   async listConsent(): Promise<{ consent: string[]; autonomous: boolean }> {
+    if (this.expired()) {
+      throw new Error("session expired");
+    }
     return { consent: this.readConsent(), autonomous: this.readAutonomous() };
   }
 
@@ -283,6 +295,9 @@ export class SessionDO extends DurableObject<Env> {
    * no-op, so a stale console cannot resurrect state by revoking it.
    */
   async revokeConsent(origin: string): Promise<{ ok: true; consent: string[] }> {
+    if (this.expired()) {
+      throw new Error("session expired");
+    }
     const allowed = this.readConsent().filter((o) => o !== origin);
     this.writeConsent(allowed);
     const accountId = this.accountId();
@@ -298,6 +313,9 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   async grantConsent(origin: string): Promise<{ ok: true }> {
+    if (this.expired()) {
+      throw new Error("session expired");
+    }
     // Write through to the account, if this session has been claimed, so the
     // grant outlives the session's two hours. Not awaited: consent must answer
     // without waiting on a second Durable Object, and the local mirror below
