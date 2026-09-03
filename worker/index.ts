@@ -1,11 +1,13 @@
 import { SessionDO } from "./session-do";
 import { OAuthClientDO } from "./oauth/client-do";
 import { OAuthCodeDO } from "./oauth/code-do";
+import { AccountDO } from "./account-do";
 import { FACADE_HEADERS } from "./facade-headers";
 import { isPrivateUrl } from "./is-private-url";
 import { makeResolve4 } from "./doh-resolve4";
+import { isAccountId } from "./account";
 
-export { SessionDO, OAuthClientDO, OAuthCodeDO };
+export { SessionDO, OAuthClientDO, OAuthCodeDO, AccountDO };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -43,6 +45,28 @@ export default {
       const stub = env.SESSION.getByName(consentMatch[1]);
       await stub.grantConsent(origin);
       return json({ ok: true, origin });
+    }
+
+    // Bind a session to an account so its grants outlive the session's TTL.
+    // The account id is a bearer credential the console holds (see
+    // worker/account.ts) — validated for shape here, the way every other
+    // policy check in this file lives in the worker rather than the DO.
+    const accountMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/account$/);
+    if (accountMatch && request.method === "POST") {
+      let body: { accountId?: unknown };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return json({ ok: false, error: "invalid body" }, 400);
+      }
+      if (!isAccountId(body.accountId)) {
+        return json({ ok: false, error: "invalid accountId" }, 400);
+      }
+      const stub = env.SESSION.getByName(accountMatch[1]);
+      const claimed = await stub.claimAccount(body.accountId);
+      // 409: the session is already someone else's. First claim wins.
+      if (!claimed.ok) return json({ ok: false, error: claimed.error }, 409);
+      return json({ ok: true, consent: claimed.consent });
     }
 
     if (path === "/mcp") {

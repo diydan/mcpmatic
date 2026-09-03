@@ -54,3 +54,26 @@ export function qualifiedToolName(nativeName: string, origin: string): string {
   const name = `${base.slice(0, 80)}_on_${originSlug(origin)}`;
   return name.slice(0, 128);
 }
+
+/**
+ * Union two origin lists, first list's order preserved, duplicates and blanks
+ * dropped.
+ *
+ * Two callers need exactly this and for different reasons: autonomous mode
+ * opens the demo catalog alongside whatever is already granted, and a session
+ * claimed by an account inherits the account's grants on top of its own. One
+ * function rather than two that drift.
+ */
+export function unionOrigins(
+  first: readonly string[],
+  second: readonly string[],
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const origin of [...first, ...second]) {
+    if (!origin || seen.has(origin)) continue;
+    seen.add(origin);
+    out.push(origin);
+  }
+  return out;
+}

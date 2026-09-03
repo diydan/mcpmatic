@@ -9,6 +9,12 @@ declare namespace Cloudflare {
     SESSION: DurableObjectNamespace<import("./worker/session-do").SessionDO>;
     OAUTH_CLIENT: DurableObjectNamespace<import("./worker/oauth/client-do").OAuthClientDO>;
     OAUTH_CODE: DurableObjectNamespace<import("./worker/oauth/code-do").OAuthCodeDO>;
+    /**
+     * One DO per account. Holds granted origins and the sessions that claimed
+     * it, so consent outlives a session's two-hour TTL. Holds no profile and
+     * no field value — see worker/account-do.ts.
+     */
+    ACCOUNT: DurableObjectNamespace<import("./worker/account-do").AccountDO>;
     OAUTH_TOKENS: KVNamespace;
     /**
      * Generated (and human-blessed) WebMCP manifests, keyed two ways:

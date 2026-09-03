@@ -47,6 +47,7 @@ import {
   stripProfilePaths,
 } from "./approval";
 import { parseBridgeRole } from "./bridge-role";
+import { claimDecision } from "./account";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 /**
@@ -205,7 +206,72 @@ export class SessionDO extends DurableObject<Env> {
     return { consent: this.readConsent(), autonomous: this.readAutonomous() };
   }
 
+  private accountId(): string | null {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'accountId' LIMIT 1`,
+      )
+      .toArray()[0];
+    return row?.value ?? null;
+  }
+
+  /**
+   * Bind this session to an account, inheriting its grants.
+   *
+   * Claimed, not replaced: the session keeps its token, its browser and
+   * anything already granted, and the account learns those grants too. First
+   * claim wins — the token is a bearer credential, so a second account must
+   * not be able to bind it and inherit the list.
+   */
+  async claimAccount(
+    accountId: string,
+  ): Promise<{ ok: boolean; consent?: string[]; error?: string }> {
+    const decision = claimDecision(this.accountId(), accountId);
+    if (!decision.ok) return { ok: false, error: decision.reason };
+    const { grants } = await this.env.ACCOUNT.getByName(accountId).claim(
+      this.sessionToken() ?? "",
+      this.readConsent(),
+    );
+    this.ctx.storage.sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('accountId', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      accountId,
+    );
+    this.writeConsent(grants);
+    this.sendState();
+    return { ok: true, consent: grants };
+  }
+
+  private sessionToken(): string | null {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'sessionToken' LIMIT 1`,
+      )
+      .toArray()[0];
+    return row?.value ?? null;
+  }
+
+  private writeConsent(origins: readonly string[]): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('consent', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      JSON.stringify([...origins]),
+    );
+  }
+
   async grantConsent(origin: string): Promise<{ ok: true }> {
+    // Write through to the account, if this session has been claimed, so the
+    // grant outlives the session's two hours. Not awaited: consent must answer
+    // without waiting on a second Durable Object, and the local mirror below
+    // is what every read in this class actually uses.
+    const accountId = this.accountId();
+    if (accountId && origin) {
+      this.ctx.waitUntil(
+        this.env.ACCOUNT.getByName(accountId)
+          .grant(origin)
+          .then(() => undefined),
+      );
+    }
     const allowed = this.readConsent();
     if (!allowed.includes(origin)) {
       allowed.push(origin);

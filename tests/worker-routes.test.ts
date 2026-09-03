@@ -67,6 +67,7 @@ vi.mock("../worker/oauth/client-do", () => ({
 vi.mock("../worker/oauth/code-do", () => ({
   OAuthCodeDO: class OAuthCodeDO {},
 }));
+vi.mock("../worker/account-do", () => ({ AccountDO: class AccountDO {} }));
 
 // Pull the mocked handles AFTER the mocks are registered. Imports below
 // this point (worker default export) refer to the mocked modules.
@@ -87,12 +88,18 @@ import worker from "../worker/index";
  * the routes that need them.
  */
 function makeEnv(): Env & {
+  __claimAccount: ReturnType<typeof vi.fn>;
   __sessionGetByName: ReturnType<typeof vi.fn>;
   __oauthClientGetByName: ReturnType<typeof vi.fn>;
   __oauthCodeGetByName: ReturnType<typeof vi.fn>;
 } {
+  const claimAccount = vi.fn(async (_accountId: string) => ({
+    ok: true,
+    consent: ["https://www.allbirds.com"],
+  }));
   const sessionGetByName = vi.fn((_name: string) => ({
     initSession: async (_token: string) => {},
+    claimAccount,
     fetch: async (_req: Request) => new Response(null, { status: 200 }),
   }));
   const oauthClientGetByName = vi.fn((_name: string) => ({
@@ -106,9 +113,11 @@ function makeEnv(): Env & {
     OAUTH_CLIENT: { getByName: oauthClientGetByName },
     OAUTH_CODE: { getByName: oauthCodeGetByName },
     __sessionGetByName: sessionGetByName,
+    __claimAccount: claimAccount,
     __oauthClientGetByName: oauthClientGetByName,
     __oauthCodeGetByName: oauthCodeGetByName,
   } as unknown as Env & {
+    __claimAccount: ReturnType<typeof vi.fn>;
     __sessionGetByName: ReturnType<typeof vi.fn>;
     __oauthClientGetByName: ReturnType<typeof vi.fn>;
     __oauthCodeGetByName: ReturnType<typeof vi.fn>;
@@ -255,5 +264,45 @@ describe("worker/index.ts — route wiring", () => {
       makeEnv() as unknown as Env,
     );
     expect(res.status).toBe(404);
+  });
+});
+describe("POST /s/:token/account", () => {
+  const TOKEN = "a".repeat(64);
+  const ACCOUNT = "b".repeat(64);
+
+  function post(body: unknown) {
+    return new Request(`https://worker.local/s/${TOKEN}/account`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("claims the session for the account and returns the inherited grants", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(post({ accountId: ACCOUNT }), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      consent: ["https://www.allbirds.com"],
+    });
+    expect(env.__claimAccount).toHaveBeenCalledWith(ACCOUNT);
+  });
+
+  it("rejects a malformed account id without touching the DO", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(post({ accountId: "nope" }), env);
+    expect(res.status).toBe(400);
+    expect(env.__claimAccount).not.toHaveBeenCalled();
+  });
+
+  it("refuses a session already claimed by another account", async () => {
+    const env = makeEnv();
+    env.__claimAccount.mockResolvedValueOnce({
+      ok: false,
+      error: "claimed-by-another",
+    });
+    const res = await worker.fetch!(post({ accountId: ACCOUNT }), env);
+    expect(res.status).toBe(409);
   });
 });

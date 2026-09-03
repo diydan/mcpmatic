@@ -11,6 +11,7 @@
       "/sessions/*",
       "/s/*/bridge",
       "/s/*/consent",
+      "/s/*/account",
       "/mcp",
       "/oauth/*"
     ]
@@ -19,7 +20,8 @@
     "bindings": [
       { "name": "SESSION", "class_name": "SessionDO" },
       { "name": "OAUTH_CLIENT", "class_name": "OAuthClientDO" },
-      { "name": "OAUTH_CODE", "class_name": "OAuthCodeDO" }
+      { "name": "OAUTH_CODE", "class_name": "OAuthCodeDO" },
+      { "name": "ACCOUNT", "class_name": "AccountDO" }
     ]
   },
   "kv_namespaces": [
@@ -29,7 +31,8 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
     { "tag": "v2", "new_sqlite_classes": ["OAuthClientDO"] },
-    { "tag": "v3", "new_sqlite_classes": ["OAuthCodeDO"] }
+    { "tag": "v3", "new_sqlite_classes": ["OAuthCodeDO"] },
+    { "tag": "v4", "new_sqlite_classes": ["AccountDO"] }
   ],
   "browser": {
     "binding": "BROWSER"

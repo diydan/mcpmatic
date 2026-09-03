@@ -1,0 +1,84 @@
+import { DurableObject } from "cloudflare:workers";
+import { unionOrigins } from "../shared/origin";
+
+/**
+ * The durable half of a session.
+ *
+ * Holds granted origins and the sessions that have claimed this account.
+ * Deliberately holds no profile and no field value: the profile lives in the
+ * console's localStorage, and moving it here is a separate, opt-in decision
+ * (see the session-as-account spec, §Opt-in server-side profile). An account
+ * that cannot hold a value cannot leak one.
+ */
+export class AccountDO extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.ctx.blockConcurrencyWhile(async () => {
+      this.ctx.storage.sql.exec(
+        `CREATE TABLE IF NOT EXISTS grants (
+           origin TEXT PRIMARY KEY,
+           granted_at INTEGER NOT NULL
+         )`,
+      );
+      this.ctx.storage.sql.exec(
+        `CREATE TABLE IF NOT EXISTS sessions (
+           token TEXT PRIMARY KEY,
+           claimed_at INTEGER NOT NULL
+         )`,
+      );
+    });
+  }
+
+  async listGrants(): Promise<string[]> {
+    return this.ctx.storage.sql
+      .exec<{ origin: string }>(`SELECT origin FROM grants ORDER BY granted_at`)
+      .toArray()
+      .map((r) => r.origin);
+  }
+
+  /** Idempotent: re-granting an origin keeps its original timestamp. */
+  async grant(origin: string): Promise<{ ok: true }> {
+    if (!origin) return { ok: true };
+    this.ctx.storage.sql.exec(
+      `INSERT INTO grants (origin, granted_at) VALUES (?, ?)
+       ON CONFLICT(origin) DO NOTHING`,
+      origin,
+      Date.now(),
+    );
+    return { ok: true };
+  }
+
+  async revoke(origin: string): Promise<{ ok: true }> {
+    this.ctx.storage.sql.exec(`DELETE FROM grants WHERE origin = ?`, origin);
+    return { ok: true };
+  }
+
+  /**
+   * Record the claim and hand back the union of what the account already had
+   * and what the session brought with it.
+   *
+   * A session granted an origin before being claimed should not lose it, and
+   * the account should learn it — the human granted it either way.
+   */
+  async claim(
+    sessionToken: string,
+    sessionGrants: readonly string[],
+  ): Promise<{ grants: string[] }> {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO sessions (token, claimed_at) VALUES (?, ?)
+       ON CONFLICT(token) DO NOTHING`,
+      sessionToken,
+      Date.now(),
+    );
+    const merged = unionOrigins(await this.listGrants(), sessionGrants);
+    for (const origin of merged) await this.grant(origin);
+    return { grants: merged };
+  }
+
+  async listSessions(): Promise<string[]> {
+    return this.ctx.storage.sql
+      .exec<{ token: string }>(`SELECT token FROM sessions ORDER BY claimed_at`)
+      .toArray()
+      .map((r) => r.token);
+  }
+}
