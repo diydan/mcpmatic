@@ -87,6 +87,8 @@ Beyond the user session, the same primitives enable a developer platform: hosted
 Live URL: https://mcpmatic.dan-3c7.workers.dev
 No login, no key, no install.
 
+(The Worker hostname predates the name. It is the right URL.)
+
 PREFERRED — ChatGPT desktop
 1. Use GPT-5.6 Sol or Terra. Luna has WebMCP disabled. Enterprise/Edu
    workspaces have no site tools.

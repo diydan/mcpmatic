@@ -1,4 +1,4 @@
-# Browsermatic
+# BrowserMatic
 
 A WebMCP session that spans origins.
 
@@ -322,7 +322,7 @@ so anything the SDK accepts is what those clients accept.
   rejection.
 - `tests/oauth-e2e-sdk.test.ts` — same flow, but the final `/mcp`
   handshake is driven by the real `@modelcontextprotocol/sdk` `Client` +
-  `StreamableHTTPClientTransport`. Asserts `serverInfo.name === "mcpmatic"`.
+  `StreamableHTTPClientTransport`. Asserts `serverInfo.name === "browsermatic"`.
   This is wire-format compatibility proof.
 - `tests/oauth-smoke.sh` — manual post-deploy procedure. Run after
   `pnpm exec wrangler deploy` (which requires

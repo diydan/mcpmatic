@@ -15,7 +15,7 @@ export function Home() {
         <p className="eyebrow">webmcp session</p>
         <ThemeToggle />
       </div>
-      <h1>Browsermatic</h1>
+      <h1>BrowserMatic</h1>
       <p className="lede">
         One conversation, many origins. Shopify stores already speak WebMCP —
         we proxy those tools, origin-qualified. Sites that have none get a

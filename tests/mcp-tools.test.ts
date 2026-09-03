@@ -127,7 +127,7 @@ describe("buildToolList with a registry", () => {
   });
 });
 describe("approval-required tools are labelled", () => {
-  const APPROVAL_NOTE = "Requires human approval in the mcpmatic console.";
+  const APPROVAL_NOTE = "Requires human approval in the BrowserMatic console.";
 
   it("marks a tool that declares fillsFrom", async () => {
     const list = await buildToolList(new Set(["https://www.allbirds.com"]));

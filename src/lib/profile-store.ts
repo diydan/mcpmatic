@@ -4,6 +4,7 @@ import {
   type Profile,
 } from "../../shared/profile";
 
+// Same reason as account-store: renaming this key discards the profile.
 const KEY = "mcpmatic.profile.v1";
 
 function read(): Profile {

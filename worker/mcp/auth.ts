@@ -57,7 +57,7 @@ function unauthorized(): AuthErr {
         status: 401,
         headers: {
           "content-type": "application/json",
-          "WWW-Authenticate": 'Bearer realm="mcpmatic"',
+          "WWW-Authenticate": 'Bearer realm="browsermatic"',
         },
       },
     ),
