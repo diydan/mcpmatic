@@ -3,7 +3,7 @@ import { allManifests, STORES } from "../shared/stores";
 import { isWebMcpToolName } from "../shared/manifest";
 
 describe("demo stores", () => {
-  it("includes two Shopify origins, Kayak, and a GOV.UK bless demo", () => {
+  it("includes two Shopify origins, Kayak, and a GOV.UK approval demo", () => {
     const byKind = Object.fromEntries(
       ["shopify-webmcp", "facade"].map((k) => [
         k,
@@ -18,7 +18,7 @@ describe("demo stores", () => {
     expect(byKind.facade).toContain("https://www.gov.uk");
   });
 
-  it("blesses only a postcode for the council lookup", () => {
+  it("approves only a postcode for the council lookup", () => {
     const tool = allManifests().find((t) => t.name === "find_local_council_on_gov_uk");
     expect(tool?.origin).toBe("https://www.gov.uk");
     expect(tool?.fillsFrom).toEqual(["address.postcode"]);
@@ -41,7 +41,7 @@ describe("demo stores", () => {
   });
 
   it("declares fillsFrom only where a step consumes it", () => {
-    // A bless prompt that names a field nothing sends is a lie, and spreading
+    // An approval prompt that names a field nothing sends is a lie, and spreading
     // an undeclared key into a native Shopify tool can trip its schema.
     for (const tool of allManifests()) {
       for (const path of tool.fillsFrom ?? []) {

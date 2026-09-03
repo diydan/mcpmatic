@@ -39,7 +39,7 @@ export const STORES: Store[] = [
     label: "GOV.UK",
     kind: "facade",
     blurb:
-      "Find your local council. Bless a postcode; the rest of the profile stays on this device.",
+      "Find your local council. Approve a postcode; the rest of the profile stays on this device.",
   },
 ];
 
@@ -181,7 +181,7 @@ const govUk: ToolManifest = {
   kind: "facade",
   origin: "https://www.gov.uk",
   description:
-    "Find the local council for the shopper's postcode on GOV.UK. Blesses only address.postcode; does not send name or the rest of the profile. Does not log the value.",
+    "Find the local council for the shopper's postcode on GOV.UK. Approves only address.postcode; does not send name or the rest of the profile. Does not log the value.",
   inputSchema: {
     type: "object",
     properties: {},

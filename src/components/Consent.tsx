@@ -43,7 +43,7 @@ export function Consent({
       </button>
       <p className="consent__note">
         {autonomous
-          ? "On: every demo origin is granted, and any site you or ChatGPT open is granted. Bless still asks before profile fields leave."
+          ? "On: every demo origin is granted, and any site you or ChatGPT open is granted. Approval still asks before profile fields leave."
           : "Off: grant each origin yourself. Turn on to let ChatGPT move without a grant click."}
       </p>
       <ul>

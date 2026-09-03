@@ -43,6 +43,12 @@ import {
 import type { DiscoveredTool } from "../shared/protocol";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
 import {
+  PageErrorLog,
+  attachPageErrorCapture,
+  describePageErrors,
+  type PageEventSource,
+} from "./page-errors";
+import {
   ApprovalGate,
   approvalFailureText,
   missingFills,
@@ -101,6 +107,7 @@ type LiveBrowser = {
     };
     setViewportSize?: (size: { width: number; height: number }) => Promise<void>;
     addInitScript?: (script: string | { content: string }) => Promise<void>;
+    on?: PageEventSource["on"];
   };
   cdp: CdpSession | null;
 };
@@ -125,6 +132,17 @@ export class SessionDO extends DurableObject<Env> {
   });
   private remoteTools: DiscoveredTool[] = [];
   private remoteToolsOrigin: string | null = null;
+  /**
+   * What the open page reported went wrong. Memory-only and per session by
+   * design — see page-errors.ts on why this is not the audit table.
+   */
+  private pageErrors = new PageErrorLog();
+  /**
+   * Whether the live browser's page accepted the error subscriptions. False
+   * means an empty buffer proves nothing, so get_page_errors must not report
+   * a clean page.
+   */
+  private pageErrorsAttached = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -454,7 +472,7 @@ export class SessionDO extends DurableObject<Env> {
     // The MCP entry, and only this one, strips caller-supplied profile paths.
     // Otherwise a client could pass {"address.line1": "…"} and route around
     // the approval — and the audit row would name a field that was never the
-    // user's profile. The façade path merges *after* its own bless, so it is
+    // user's profile. The façade path merges *after* its own approve, so it is
     // deliberately left alone.
     const safeArgs = stripProfilePaths(manifest?.fillsFrom, args);
     let result: { ok: boolean; text: string; resolved?: string[] };
@@ -721,7 +739,7 @@ export class SessionDO extends DurableObject<Env> {
 
   /**
    * One in-page agent turn is finished. The page sends this on every exit path,
-   * including bless denied and executeTool throwing, so a turn cannot strand
+   * including approval denied and executeTool throwing, so a turn cannot strand
    * with the chat box disabled.
    */
   private async onToolResult(
@@ -793,6 +811,30 @@ export class SessionDO extends DurableObject<Env> {
       }
       this.setCurrentOrigin(originFromUrl(url));
       return { ok: true, text: `URL: ${url}\nTitle: ${title}\n\n${body}` };
+    }
+    if (name === "get_page_errors") {
+      // Reports on the browser; never starts one, same rule as get_page_state.
+      const entries = this.pageErrors.all();
+      // An empty buffer means three different things, and reporting a clean
+      // page for any of the other two tells the operator the opposite of the
+      // truth — the failure mode this tool exists to close.
+      if (entries.length === 0) {
+        if (!this.live) {
+          return {
+            ok: true,
+            text: this.env.BROWSER
+              ? "No remote browser yet, so nothing has been recorded."
+              : "No Browser Rendering binding in this environment, so no page errors are captured.",
+          };
+        }
+        if (!this.pageErrorsAttached) {
+          return {
+            ok: true,
+            text: "This browser does not report page events, so no errors are being captured. An empty result here is not a clean page.",
+          };
+        }
+      }
+      return { ok: true, text: describePageErrors(entries) };
     }
     if (name === "list_remote_tools") {
       // Reports on the page that is open; never starts a browser, same rule as
@@ -1147,6 +1189,15 @@ export class SessionDO extends DurableObject<Env> {
       } catch {
         /* older binding without addInitScript; native path will report why */
       }
+      // Subscribe before the first navigation, or the errors of the page that
+      // navigation loads are missed. A binding without page.on captures
+      // nothing and says so through get_page_errors rather than failing here.
+      // Clear first: this browser must not inherit a torn-down one's errors.
+      this.pageErrors.clear();
+      this.pageErrorsAttached = attachPageErrorCapture(
+        page as PageEventSource,
+        this.pageErrors,
+      );
       let cdp: CdpSession | null = null;
       try {
         cdp = wrapCdp(await page.context().newCDPSession(page));

@@ -78,7 +78,7 @@ describe("site telemetry is gated on proving control of the origin", () => {
     expect(res.status).toBe(200);
     expect(site.markVerified).toHaveBeenCalled();
     expect(fetchSpy).toHaveBeenCalledWith(
-      `${ORIGIN}/.well-known/mcpmatic.txt`,
+      `${ORIGIN}/.well-known/browsermatic.txt`,
       expect.anything(),
     );
     fetchSpy.mockRestore();

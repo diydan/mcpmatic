@@ -3,7 +3,7 @@ import { qualifiedToolName } from "../../shared/origin";
 import type { DiscoveredTool } from "../../shared/protocol";
 import { ensureModelContext } from "./webmcp-polyfill";
 
-export type BlessRequest = {
+export type ApprovalRequest = {
   origin: string;
   tool: string;
   fieldNames: string[];
@@ -23,7 +23,7 @@ export type RegisterOpts = {
    * neither — a `fillsFrom` tool registered there still runs, and the DO
    * suspends it for the console to approve.
    */
-  bless?: (req: BlessRequest) => Promise<boolean>;
+  approve?: (req: ApprovalRequest) => Promise<boolean>;
   resolveFields?: (paths: readonly string[]) => Record<string, string>;
 };
 
@@ -111,6 +111,13 @@ const SPINE: ToolSpec[] = [
     origin: null,
   },
   {
+    name: "get_page_errors",
+    description:
+      "Errors the open page itself reported this session: uncaught exceptions, console errors and warnings, failed requests, and 4xx/5xx responses. A replayed step that quietly did nothing usually left a trace here.",
+    inputSchema: { ...EMPTY_INPUT },
+    origin: null,
+  },
+  {
     name: "navigate_to",
     description:
       "Navigate the remote browser to an https origin the user has granted.",
@@ -150,8 +157,8 @@ export function createRegistration(opts: RegisterOpts): Registration {
       let fills: Record<string, string> = {};
       // No profile reader here means this is the façade. Send the input as it
       // came; the fields are the console's to release, not this page's.
-      if (fillsFrom?.length && opts.bless && opts.resolveFields) {
-        const ok = await opts.bless({
+      if (fillsFrom?.length && opts.approve && opts.resolveFields) {
+        const ok = await opts.approve({
           origin: origin ?? location.origin,
           tool: spec.name,
           fieldNames: fillsFrom,

@@ -11,13 +11,13 @@ import type {
 import { ChatPanel } from "../components/ChatPanel";
 import { Viewport } from "../components/Viewport";
 import { Consent } from "../components/Consent";
-import { BlessGate } from "../components/BlessGate";
+import { ApprovalDialog } from "../components/ApprovalDialog";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Header } from "../components/Header";
 import { openBridge } from "../lib/bridge";
 import {
   createRegistration,
-  type BlessRequest,
+  type ApprovalRequest,
   type ObservedByOrigin,
   type Registration,
 } from "../lib/register-all";
@@ -81,27 +81,27 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
   const [pageUrl, setPageUrl] = useState<string | null>(seededFromNav);
   const [remoteTools, setRemoteTools] = useState<DiscoveredTool[]>([]);
   const [autonomous, setAutonomous] = useState(false);
-  const [bless, setBless] = useState<BlessRequest | null>(null);
-  const blessWait = useRef<((ok: boolean) => void) | null>(null);
+  const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  const approvalWait = useRef<((ok: boolean) => void) | null>(null);
   /**
    * One dialog at a time. A second request arriving while one is open is
    * denied rather than replacing it — replacing would strand whoever is
    * waiting on the first, and there is only one human here to answer anyway.
    */
   /** Close a dialog the server has stopped waiting on, freeing the slot. */
-  const dismissBless = useCallback(() => {
-    blessWait.current = null;
-    setBless(null);
+  const dismissApproval = useCallback(() => {
+    approvalWait.current = null;
+    setApproval(null);
   }, []);
-  const askBless = useCallback(
-    (req: BlessRequest) =>
+  const askApproval = useCallback(
+    (req: ApprovalRequest) =>
       new Promise<boolean>((resolve) => {
-        if (blessWait.current) {
+        if (approvalWait.current) {
           resolve(false);
           return;
         }
-        blessWait.current = resolve;
-        setBless(req);
+        approvalWait.current = resolve;
+        setApproval(req);
       }),
     [],
   );
@@ -292,9 +292,9 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           // lives here and nowhere else, so this is the only place that can
           // answer it.
           void answerApproval(msg, {
-            bless: askBless,
+            approve: askApproval,
             resolveFields: (paths) => profileStore.resolve(paths),
-            dismiss: dismissBless,
+            dismiss: dismissApproval,
           }).then((reply) => bridgeRef.current?.send(reply));
         }
         if (msg.type === "assistant") {
@@ -357,7 +357,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
       // The façade holds no profile. A fillsFrom tool still registers there;
       // the DO suspends it and the console supplies the fields.
       resolveFields: isConsole ? (paths) => profileStore.resolve(paths) : undefined,
-      bless: isConsole ? askBless : undefined,
+      approve: isConsole ? askApproval : undefined,
     });
     registrationRef.current = registration;
     void syncTools(
@@ -639,12 +639,12 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           }}
         />
       </div>
-      <BlessGate
-        request={bless}
+      <ApprovalDialog
+        request={approval}
         onDecide={(ok) => {
-          blessWait.current?.(ok);
-          blessWait.current = null;
-          setBless(null);
+          approvalWait.current?.(ok);
+          approvalWait.current = null;
+          setApproval(null);
         }}
       />
     </div>

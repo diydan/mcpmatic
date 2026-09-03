@@ -386,7 +386,7 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
     const mcpBody = (await mcpRes.json()) as {
       result: { serverInfo: { name: string } };
     };
-    expect(mcpBody.result.serverInfo.name).toBe("mcpmatic");
+    expect(mcpBody.result.serverInfo.name).toBe("browsermatic");
 
     // And: the same access token can NOT be reused for /mcp without first
     // going through the auth code flow — it carries the userSessionToken,

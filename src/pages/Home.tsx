@@ -73,7 +73,7 @@ export function Home() {
               {store.kind === "shopify-webmcp"
                 ? "Shopify native"
                 : store.label === "GOV.UK"
-                  ? "Bless"
+                  ? "Approve"
                   : "Façade"}
             </span>
             <h2>{store.label}</h2>

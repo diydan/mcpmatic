@@ -33,7 +33,7 @@ describe("registerAll is the only path", () => {
       manifests: [kayak],
       consented: new Set(["https://www.kayak.com"]),
       executeRemote: remote,
-      bless: async () => true,
+      approve: async () => true,
       resolveFields: (paths) =>
         Object.fromEntries(paths.map((p) => [p, "EC2A 3DZ"])),
     });
@@ -61,7 +61,7 @@ describe("registerAll is the only path", () => {
       manifests: [kayak],
       consented: new Set(),
       executeRemote: async () => "ok",
-      bless: async () => true,
+      approve: async () => true,
       resolveFields: () => ({}),
     });
     const tools = await ensureModelContext().getTools();

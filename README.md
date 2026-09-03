@@ -7,7 +7,7 @@ Shopify storefronts already register `search_catalog`, `update_cart`, and
 proxies them, origin-qualified, so ChatGPT — which only sees tools on the
 page it loaded — can still call them. Sites with no WebMCP get a synthesised
 tool. Observed tools on the open page are registered the same way. A local
-profile fills only the fields a tool named, after the human blesses them.
+profile fills only the fields a tool named, after the human approves them.
 
 **Live:** <https://mcpmatic.dan-3c7.workers.dev> — open it, grant an origin,
 and the tools appear. No login, no key, no install.
@@ -59,7 +59,7 @@ session page. That is this.
 | [allbirds.com](https://www.allbirds.com) | Shopify native | `search_catalog_on_allbirds_com`, `update_cart_on_allbirds_com`, `proceed_to_checkout_on_allbirds_com`, `fill_checkout_on_allbirds_com`, plus whatever else the store registers, observed live |
 | [brooklinen.com](https://www.brooklinen.com) | Shopify native | same pack, `_on_brooklinen_com` |
 | [kayak.com](https://www.kayak.com) | Synthesised | `search_flights_on_kayak_com` |
-| [gov.uk](https://www.gov.uk/find-local-council) | Synthesised + bless | `find_local_council_on_gov_uk` (postcode only) |
+| [gov.uk](https://www.gov.uk/find-local-council) | Synthesised + approve | `find_local_council_on_gov_uk` (postcode only) |
 
 You browse the remote page; ChatGPT calls the tools on this façade. Grant any
 https origin — `list_remote_tools` reports its real WebMCP surface, and
