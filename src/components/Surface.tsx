@@ -6,9 +6,18 @@ type Props = {
   remoteTools: DiscoveredTool[];
   registered: ToolSchema[];
   onOffer: (name: string) => void;
+  onMapSite?: () => void;
+  mapSiteBusy?: boolean;
 };
 
-export function Surface({ origin, remoteTools, registered, onOffer }: Props) {
+export function Surface({
+  origin,
+  remoteTools,
+  registered,
+  onOffer,
+  onMapSite,
+  mapSiteBusy,
+}: Props) {
   const offers = offersFor({ registered, origin });
   const host = origin ? origin.replace(/^https:\/\//, "") : null;
 
@@ -34,9 +43,16 @@ export function Surface({ origin, remoteTools, registered, onOffer }: Props) {
           ))}
         </ul>
       ) : host ? (
-        <p className="muted">
-          No WebMCP tools on this page. Synthesised tools may still apply.
-        </p>
+        <div className="surface__no-tools">
+          <p className="muted">
+            No WebMCP tools on this page. Synthesised tools may still apply.
+          </p>
+          {onMapSite ? (
+            <button type="button" disabled={!!mapSiteBusy} onClick={onMapSite}>
+              {mapSiteBusy ? "mapping…" : "Map this site"}
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {offers.length > 0 ? (
         <ul className="surface__offers">

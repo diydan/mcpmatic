@@ -12,6 +12,7 @@ import { ChatPanel } from "../components/ChatPanel";
 import { Viewport } from "../components/Viewport";
 import { Consent } from "../components/Consent";
 import { BlessGate } from "../components/BlessGate";
+import { ManifestReview, type ManifestDraft } from "../components/ManifestReview";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Header } from "../components/Header";
 import { openBridge } from "../lib/bridge";
@@ -70,6 +71,8 @@ export function Session() {
   const [remoteTools, setRemoteTools] = useState<DiscoveredTool[]>([]);
   const [autonomous, setAutonomous] = useState(false);
   const [bless, setBless] = useState<BlessRequest | null>(null);
+  const [manifestDraft, setManifestDraft] = useState<ManifestDraft | null>(null);
+  const [mapSiteBusy, setMapSiteBusy] = useState(false);
   const blessWait = useRef<((ok: boolean) => void) | null>(null);
   const bridgeRef = useRef<ReturnType<typeof openBridge> | null>(null);
   const registrationRef = useRef<Registration | null>(null);
@@ -231,6 +234,13 @@ export function Session() {
         if (msg.type === "error") {
           setLines((l) => [...l, { kind: "system", text: msg.message }]);
           setBusy(false);
+          setMapSiteBusy(false);
+        }
+        if (msg.type === "manifest_draft") {
+          setMapSiteBusy(false);
+          setManifestDraft(
+            msg.tools.length > 0 ? { origin: msg.origin, tools: msg.tools } : null,
+          );
         }
         if (msg.type === "tool_call") {
           setLines((l) => [
@@ -485,6 +495,19 @@ export function Session() {
           remoteTools={remoteTools}
           registered={tools}
           onOffer={(name) => void runOffer(name)}
+          mapSiteBusy={mapSiteBusy}
+          onMapSite={
+            pageOrigin
+              ? () => {
+                  setMapSiteBusy(true);
+                  bridgeRef.current?.send({
+                    v: 1,
+                    type: "generate_manifest",
+                    origin: pageOrigin,
+                  });
+                }
+              : undefined
+          }
         />
         <Viewport
           jpeg={jpeg}
@@ -522,6 +545,19 @@ export function Session() {
           blessWait.current?.(ok);
           blessWait.current = null;
           setBless(null);
+        }}
+      />
+      <ManifestReview
+        draft={manifestDraft}
+        onDecide={(name, ok) => {
+          if (!manifestDraft) return;
+          bridgeRef.current?.send({
+            v: 1,
+            type: "manifest_decision",
+            origin: manifestDraft.origin,
+            name,
+            bless: ok,
+          });
         }}
       />
     </div>

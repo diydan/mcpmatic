@@ -418,3 +418,32 @@ input {
 @media (prefers-reduced-motion: reduce) {
   body { transition: none; }
 }
+
+.manifest-review {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  display: grid;
+  place-items: center;
+  padding: 1.2rem;
+}
+.manifest-review__card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 1.4rem 1.5rem;
+  max-width: 32rem;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+}
+.manifest-review__tools { list-style: none; padding: 0; margin: 1rem 0 0; }
+.manifest-review__tools > li + li {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+.manifest-review__steps { padding-left: 1.1rem; margin: 0.4rem 0 0; font-size: 0.85em; }
+.manifest-review__actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.8rem; }
+.surface__no-tools { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
