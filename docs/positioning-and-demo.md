@@ -51,9 +51,14 @@ because it is the thing calling those tools from outside the page.
 ## The demo — seven beats
 
 Two windows on screen throughout: **Claude Desktop** (the agent) and **the
-mcpmatic console** (the human). The split screen is the argument. Everything
-the agent does, you watch happen in a real browser, and the moments where it
-needs you are visible as they occur.
+mcpmatic console at `/c/<token>`** (the human). The split screen is the
+argument. Everything the agent does, you watch happen in a real browser, and
+the moments where it needs you are visible as they occur.
+
+The console is a separate route from the façade `/s/<token>` that an agent
+loads, and the split is deliberate: only the console can answer an approval, so
+an agent cannot approve on your behalf even though it holds the same token.
+Worth one sentence on screen at beat 5.
 
 **0 · Cold open (20s).** Claude Desktop, no mcpmatic. *"Add wool runners in a 9
 to my Allbirds cart."* It cannot. Not "refuses" — genuinely has no way.
@@ -81,7 +86,8 @@ two stores. Nothing about the first session was disturbed.
 *Proves: the thing ChatGPT's per-page model cannot do.*
 
 **5 · The money shot (90s).** *"Fill the checkout."* Claude Desktop's tool call
-**suspends**. The console raises a dialog naming the exact fields —
+**suspends** — and it suspends at the console, not at the façade the agent
+itself could reach. The console raises a dialog naming the exact fields —
 `shopper.firstName`, `address.line1`, `address.postcode` — and where they are
 going. Approve. The fields land, the checkout fills, the agent's call returns.
 
