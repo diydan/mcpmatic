@@ -2,6 +2,14 @@
 
 **Status:** proposed, not yet planned or implemented. No code has been written.
 
+**Verified against `625a642`.** This repository moved four times while the spec
+was being written (`74025f8` → `86afdcb` → `625a642`), and the intermediate
+states differ in ways that change the claims below —
+`find_local_council_on_gov_uk` and `state.consented` are absent from
+`86afdcb` and present here. Every file
+reference was re-checked against `625a642`. Re-check before planning if `main`
+has moved again.
+
 ## Problem
 
 The MCP surface at `/mcp` (Phase 1) and its OAuth 2.1 flow (Phase 1.5) are
@@ -22,19 +30,19 @@ architecture rather than a policy.
 `fill_checkout_on_allbirds_com` is steps-based with `fillsFrom` and no
 `nativeName` (`shared/stores.ts:150-176`). Over MCP:
 
-1. `buildToolList` lists it for any consented origin (`worker/mcp/tools.ts:44`).
+1. `buildToolList` lists it for any consented origin (`worker/mcp/tools.ts:52`).
    There is no profile check.
 2. A client calls it. There is no page, so no `localStorage` and no bless.
 3. `runStep` reads `args[step.from]` — `step.from` is the dotted profile path
    (`"shopper.firstName"`), which nothing supplied — so `String(undefined)`
    yields `""`, and `page.fill(selector, "")` sits inside a `catch {}`
-   (`worker/session-do.ts:697-703`).
+   (`worker/session-do.ts:701-707`).
 4. `runTool` returns `{ ok: true, text: "ran fill_checkout_on_allbirds_com
-   at <url>" }` having filled nothing (`worker/session-do.ts:674`).
+   at <url>" }` having filled nothing (`worker/session-do.ts:678`).
 
-`find_local_council_on_gov_uk` has the same shape (`shared/stores.ts:190`,
-`fillsFrom: ["address.postcode"]`), so both profile-touching tools in the
-catalog fail this way.
+`find_local_council_on_gov_uk` has the same shape (`shared/stores.ts:180-196`,
+`fillsFrom: ["address.postcode"]`). Those are the only two tools in the catalog
+that declare `fillsFrom`, and both fail this way.
 
 This is sprint item P1.4's failure mode — a fake success on an empty
 effect — on the surface this design makes primary. Fixing it is not a
@@ -42,14 +50,14 @@ precondition for the design; it is the first thing the design does.
 
 **And consent does not persist.** Granted origins live in the SessionDO `meta`
 table keyed by a 64-hex token with a two-hour TTL (`session-do.ts:45`,
-`:918`). A product whose claim is "holds your consent" cannot hold it for
+`:922`). A product whose claim is "holds your consent" cannot hold it for
 longer than one afternoon.
 
 Sprint item P1.3 (consent hydration) is partly addressed already — the `state`
-message now carries `consented` (`session-do.ts:497`), so a reload re-seeds
-from the DO. That fixes the reload; it does not make consent outlive the
-session. The durability gap is what remains, and it is the part the product
-claim rests on.
+message now carries `consented` (`shared/protocol.ts:98`, sent at
+`session-do.ts:501`), so a reload re-seeds from the DO. That fixes the
+reload; it does not make consent outlive the session. The durability gap is
+what remains, and it is the part the product claim rests on.
 
 ## Non-goals (this design)
 
@@ -71,12 +79,14 @@ claim rests on.
 | Surface | Loaded by | Role |
 |---|---|---|
 | `/mcp` | any MCP client, over OAuth | the product — tools for granted origins |
-| `/s/<token>` console | the **human** | grant, watch, approve, revoke, read the log; holds the profile |
-| `/s/<token>` façade | ChatGPT desktop | unchanged; no longer the headline |
+| `/c/<token>` console | the **human** | grant, watch, approve, revoke, read the log; holds the profile |
+| `/s/<token>` façade | an agent (ChatGPT desktop) | unchanged; no longer the headline |
 
-The console and the façade are the same page today and stay the same page. What
-changes is which one the product is described in terms of, and — see
-§Approval — that the console acquires a job it cannot delegate.
+Today the console and the façade are one page at `/s/<token>`. This design
+splits them, because the console acquires a job it cannot delegate and an
+agent must not be able to do that job on the human's behalf — see §Routing an
+approval. Same origin, so the profile in `localStorage` is reachable from both
+and does not move.
 
 ## The account
 
@@ -111,7 +121,31 @@ how the façade is reached without a cookie. It stops being the *only* identity.
 
 The mechanism that makes MCP-primary compatible with a client-side profile.
 
-`runTool` inspects `manifest.fillsFrom` **before** running any step:
+**The trigger is missing fills, not declared fills.** `runTool` does not ask
+whether the manifest declares `fillsFrom`; it asks which declared paths are
+absent from `args`:
+
+```ts
+const missing = (manifest.fillsFrom ?? []).filter((p) => args[p] === undefined);
+```
+
+Empty — run the steps, the caller already supplied them. Non-empty — the
+approval path below.
+
+This is what stops the façade path prompting twice. `runTool` has two callers:
+`callTool` for MCP (`session-do.ts:250`) and `onToolExec` for the façade
+(`:439`). On the façade path `register-all.ts` has already run its client-side
+`BlessGate` (`:146`) and merged the resolved fields into the arguments
+(`:164`) before they cross the wire, so `missing` is empty and nothing prompts
+again. One rule, no entry-point branching inside `runTool`.
+
+**One guard at the MCP entry.** `callTool` strips any argument key matching a
+declared profile path before calling `runTool`. Without it a client could pass
+`{"address.line1": "…"}` and route around approval entirely — and the audit
+row would then name profile fields that were never the user's profile. The façade
+path is untouched, because it merges *after* its own bless.
+
+With `missing` non-empty:
 
 1. Mint `pendingFill { id, origin, tool, fieldNames[], expiresAt }`. It carries
    no values, because at this point none exist anywhere on the server.
@@ -187,6 +221,37 @@ anyway resolves as a disconnect.
 existing `tool_call` / `tool_result` pair, including its correlation-id
 discipline. It should read as a sibling of that code, not a new idiom.
 
+## Routing an approval: the console is its own route
+
+**Who reads the dialog?** The console and the façade are the same page today,
+and ChatGPT desktop loads that page. A bridge socket may therefore be attached
+because *an agent* opened `/s/<token>`, and an approval broadcast would render
+a `BlessGate` inside an automated browser with nobody in front of it. The
+45-second timeout bounds the damage; it does not answer the question.
+
+**Split the routes.** `/s/<token>` stays the façade — what an agent loads,
+where `registerAll()` runs, with no profile store and no approval UI mounted.
+`/c/<token>` is the console — human-loaded, mounts the profile store and the
+approval UI, and declares `role: "console"` when it opens its bridge socket.
+Approval requests route only to sockets that declared `console`. None attached,
+`needs-console`.
+
+Same origin, so `localStorage` is shared between the two views and the profile
+does not move. What changes is that the façade becomes *structurally* incapable
+of answering an approval rather than merely unlikely to, and §Surfaces becomes
+literally true instead of aspirational.
+
+**Approval authority is bearer-token authority.** The capability token now
+gates more than browser control: whoever holds it can open a console and be
+asked to release profile fields. Two things bound that. The profile is
+per-browser `localStorage`, so a stolen token opened elsewhere resolves
+whatever profile *that* browser holds, not the victim's — and with nothing
+stored, `src/lib/profile-store.ts:12` falls back to `SEED_PROFILE`. The
+realistic outcome of a stolen token is an attacker approving the release of
+demo data to a site they chose themselves. Not nothing; not the user's address
+either. Phase B's account login is what actually reduces this, by making the
+token a session handle rather than the only credential.
+
 ## Tool listing honesty
 
 `buildToolList` appends a fixed sentence to the description of any tool with
@@ -207,12 +272,20 @@ is added is a read path.
 - failure class
 - latency
 
-**The failure classes are the product.** `nativeFailure()`
-(`worker/session-do.ts:987`) already distinguishes tool-absent, schema
-mismatch, and threw. That is the raw material for a sentence no merchant can
-obtain anywhere else, because nothing else calls their WebMCP tools from
-outside their own page: *"your `update_cart` rejects 40% of agent calls
-because its schema requires a field your own storefront never sends."*
+**The failure classes are the product — and they are not free yet.**
+`nativeFailure()` (`worker/session-do.ts:991`) distinguishes exactly three:
+`threw`, `no-webmcp`, and not-registered. It does **not** distinguish a schema
+mismatch; a native call rejected for a bad argument shape arrives as `threw`,
+indistinguishable from any other exception.
+
+That matters, because schema mismatch is the single most valuable thing to tell
+a merchant — *"your `update_cart` rejects 40% of agent calls because its schema
+requires a field your own storefront never sends"* — and it is the sentence
+nobody else can produce, since nothing else calls their WebMCP tools from
+outside their page. Phase C must therefore **add** that classification at the
+call site in `callNativeTool`, not merely aggregate rows that already exist.
+Costing that honestly is the difference between a two-day phase and a two-week
+one.
 
 Boundaries, stated so they are not quietly crossed later:
 
@@ -225,6 +298,15 @@ Boundaries, stated so they are not quietly crossed later:
 
 This requires audit rows to outlive the session, which is why they move to the
 `AccountDO` in §The account. The move is a relocation, not a reshape.
+
+**One correction the telemetry forces.** Both entry points record
+`manifest.fillsFrom` unconditionally — `callTool` at `session-do.ts:258`,
+`onToolExec` at `:461` — so a call that resolved no fields still logs the
+declared names. A native-tool call on a manifest that declares `fillsFrom`
+produces a row naming fields that never moved. Aggregated, that overcounts
+profile usage. The row should record the fields **actually resolved** (the keys
+of the approval's `fills`, or of the façade's merge), not the manifest's
+declaration. The column is unchanged; only its provenance is.
 
 ## Opt-in server-side profile (designed, not built)
 
@@ -264,6 +346,16 @@ Same conventions as `tests/`:
   the pending call with an explicit failure and leaves nothing pending — the
   P0.1 discipline, applied to this pair.
 - **Listing.** `buildToolList` marks `fillsFrom` tools and leaves others alone.
+- **No double prompt.** A façade-initiated call whose args already carry the
+  resolved fields runs straight through: `missing` is empty, no
+  `approval_request` is broadcast. The regression this guards is a user
+  clicking `BlessGate` twice for one action.
+- **No self-fill over MCP.** `callTool` strips caller-supplied profile paths,
+  so a client passing `{"address.line1": "…"}` still takes the approval path
+  and the audit row still names only what was actually resolved.
+- **Routing.** An approval is not delivered to a bridge socket that did not
+  declare `role: "console"`; with only a façade socket attached the call
+  returns `needs-console`.
 - **Account.** A second session under one account inherits granted origins; an
   expired session does not expire the account; revoking an origin on the
   account removes it from a live session's tool list.
@@ -276,7 +368,17 @@ Same conventions as `tests/`:
   Self-contained, touches `session-do.ts`, `protocol.ts`, `mcp/tools.ts` and
   the console. Ships the trust claim on its own.
 - **B — account.** `AccountDO`, passkey login, durable consent, audit rows
-  relocated. Closes the durability half of P1.3.
+  relocated.
+
+  **A session is claimed, not replaced.** The console, once it holds a passkey
+  assertion, POSTs its session token to `/account/claim`; the `AccountDO`
+  records the session and the `SessionDO` records the account id. From then on
+  `grantConsent` writes through to the account, and new sessions are minted
+  *by* the account and read its grants at `initSession`. Unclaimed sessions
+  keep working exactly as today — a capability URL with no account behind it is
+  still a working two-hour session. That is what keeps "no login, no key, no
+  install" true while giving consent somewhere durable to live for people who
+  want it. Closes the durability half of P1.3.
 - **C — telemetry.** Read path and origin ownership proof.
 
 A and B are independent — A is first because it fixes a live bug, not because
@@ -288,9 +390,16 @@ two-hour session, which is the relocation B performs.
 - Whether an approval should be able to carry a *duration* ("approve address
   fields on this origin for this session") or must be per-call. Per-call is
   this design; the `pendingFill` record has room for a scope field.
-- Whether `needs-console` should include a deep link that opens the console
-  focused on the pending approval, and what that does to the capability URL's
-  referrer discipline.
+- Whether `needs-console` should include a deep link to `/c/<token>` focused on
+  the pending approval. It would put a capability URL into an MCP tool result,
+  which then lives in the client's transcript — a different exposure from the
+  `Referrer-Policy: no-referrer` discipline the façade already keeps, and one
+  the answer should weigh explicitly.
+- Whether the `role: "console"` declaration needs to be anything stronger than
+  a self-declaration on the bridge socket. It is not a security boundary
+  against the token holder — see §Routing — but if a future agent surface can
+  reach `/c/<token>`, "the façade cannot answer approvals" stops being
+  structural.
 - How an account revokes a specific MCP client grant without invalidating the
   others — Phase B needs this and RFC 7009 revocation is the obvious shape.
 - Whether telemetry should be offered to origins that have *never* consented
