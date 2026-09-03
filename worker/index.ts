@@ -1,11 +1,13 @@
 import { SessionDO } from "./session-do";
 import { OAuthClientDO } from "./oauth/client-do";
 import { OAuthCodeDO } from "./oauth/code-do";
+import { AccountDO } from "./account-do";
 import { FACADE_HEADERS } from "./facade-headers";
 import { isPrivateUrl } from "./is-private-url";
 import { makeResolve4 } from "./doh-resolve4";
+import { isAccountId } from "./account";
 
-export { SessionDO, OAuthClientDO, OAuthCodeDO };
+export { SessionDO, OAuthClientDO, OAuthCodeDO, AccountDO };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -43,6 +45,45 @@ export default {
       const stub = env.SESSION.getByName(consentMatch[1]);
       await stub.grantConsent(origin);
       return json({ ok: true, origin });
+    }
+
+    // Read-only. The durable log the account holds, or the session's own rows
+    // when it has no account. Rows are {origin, tool, fieldNames, ts} — there
+    // is no value column to expose.
+    const auditMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/audit$/);
+    if (auditMatch && request.method === "GET") {
+      const stub = env.SESSION.getByName(auditMatch[1]);
+      return json({ rows: await stub.listHistory() });
+    }
+
+    // Bind a session to an account so its grants outlive the session's TTL.
+    // The account id is a bearer credential the console holds (see
+    // worker/account.ts) — validated for shape here, the way every other
+    // policy check in this file lives in the worker rather than the DO.
+    const accountMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/account$/);
+    if (accountMatch && request.method === "POST") {
+      let body: { accountId?: unknown };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return json({ ok: false, error: "invalid body" }, 400);
+      }
+      if (!isAccountId(body.accountId)) {
+        return json({ ok: false, error: "invalid accountId" }, 400);
+      }
+      const stub = env.SESSION.getByName(accountMatch[1]);
+      const claimed = await stub.claimAccount(body.accountId);
+      // 409: the session is already someone else's. First claim wins.
+      if (!claimed.ok) return json({ ok: false, error: claimed.error }, 409);
+      return json({ ok: true, consent: claimed.consent });
+    }
+
+    // WebAuthn ceremony. Not under /s/<token>: a login happens *before* there
+    // is a session to speak of, and registration binds an authenticator to the
+    // account rather than to whichever session is open.
+    if (path.startsWith("/account/passkey/")) {
+      const { handlePasskey } = await import("./passkey-routes");
+      return handlePasskey(request, env, path.slice("/account/passkey/".length));
     }
 
     if (path === "/mcp") {

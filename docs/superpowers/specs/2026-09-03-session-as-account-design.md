@@ -378,16 +378,67 @@ Same conventions as `tests/`:
 - **B — account.** `AccountDO`, passkey login, durable consent, audit rows
   relocated.
 
-  **A session is claimed, not replaced.** The console, once it holds a passkey
-  assertion, POSTs its session token to `/account/claim`; the `AccountDO`
-  records the session and the `SessionDO` records the account id. From then on
-  `grantConsent` writes through to the account, and new sessions are minted
-  *by* the account and read its grants at `initSession`. Unclaimed sessions
-  keep working exactly as today — a capability URL with no account behind it is
-  still a working two-hour session. That is what keeps "no login, no key, no
-  install" true while giving consent somewhere durable to live for people who
-  want it. Closes the durability half of P1.3.
-- **C — telemetry.** Read path and origin ownership proof.
+  **A session is claimed, not replaced.** The console POSTs its account id to
+  `POST /s/<token>/account`; the `AccountDO` records the session and returns
+  the union of its grants and the session's, and the `SessionDO` records the
+  account id. From then on `grantConsent` writes through to the account.
+  Unclaimed sessions keep working exactly as today — a capability URL with no
+  account behind it is still a working two-hour session. That is what keeps
+  "no login, no key, no install" true while giving consent somewhere durable
+  to live for people who want it.
+
+  **Built, with two deliberate departures from the paragraph above.**
+
+  The route is `POST /s/<token>/account`, not `/account/claim`: it matches the
+  existing `/s/<token>/consent`, and keeps the session token out of a request
+  body.
+
+  Identity is a two-layer thing, and the layering is the point. The account id
+  is 256 bits the console generates and keeps in `localStorage` — a bearer
+  credential of the same class as the session token in the URL. That alone
+  buys durable consent with no auth system at all, which is what "no login" is
+  worth protecting, and it is what an account is until someone asks for more.
+
+  A **passkey** is the second layer, and it is built. A discoverable credential
+  carries the account id as its `userHandle`, so a login needs no username and
+  names no account up front — the assertion says whose it is. Signing in adopts
+  that account, re-claims the session under it, and the grants come back. That
+  is what lets an account survive cleared storage and reach a second device.
+
+  This works here for the reason `README.md`'s passkey caveat does not apply:
+  the authenticator is on the user's own device and the ceremony is
+  first-party. The caveat is about logging in to a *remote site* through a
+  browser in Cloudflare's network.
+
+  Challenges live in the KV bound as `OAUTH_TOKENS`, prefixed. A login
+  challenge is issued before anyone knows which account will answer it, so it
+  cannot live in that account's Durable Object. Single-use on read, five-minute
+  TTL.
+
+  **Consent is mirrored, not read through.** `readConsent()` is synchronous and
+  sits in hot paths (`consented()`, the `state` message); making it await a
+  second Durable Object would ripple through the class for no gain. So the
+  session keeps its local list as the read path and the account is the durable
+  source that repopulates a *new* session. `grantConsent` writes both, the
+  account write via `waitUntil` so consent still answers without waiting on a
+  second DO.
+
+  **Audit rows are mirrored too**, same reasoning and same shape: the session
+  keeps its rows as the live view it broadcasts, the account keeps the durable
+  copy, `{origin, tool, field_names, ts}` on both sides with no value column.
+  `GET /s/<token>/audit` reads the account's, falling back to the session's
+  when there is no account. Phase C's dependency on rows outliving a session is
+  satisfied.
+
+  Extracting the row mapper turned up a fault worth recording: the listing did
+  a bare `JSON.parse` on `field_names`, so one corrupt row threw and cost the
+  entire log. A row that will not parse is now kept with an empty field list —
+  the row is evidence a tool ran, and only the field list is missing. Closes the durability half of P1.3.
+- **C — telemetry.** Read path and origin ownership proof. Its two
+  dependencies now differ: audit durability is done (Phase B), but the
+  schema-mismatch failure class still does not exist — `nativeFailure`
+  classifies `threw` / `no-webmcp` / not-registered, and the sentence the
+  business case rests on needs instrumentation added inside `callNativeTool`.
 
 A and B are independent — A is first because it fixes a live bug, not because
 B needs it. **C depends on B**: telemetry requires audit rows that outlive a

@@ -24,6 +24,9 @@ import {
 import { Surface } from "../components/Surface";
 import { profileStore, seedIfEmpty } from "../lib/profile-store";
 import { answerApproval } from "../lib/approval-reply";
+import { accountId } from "../lib/account-store";
+import { PasskeyBar } from "../components/PasskeyBar";
+import { unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
 import { navigationHref, normaliseOrigin } from "../../shared/origin";
@@ -149,6 +152,32 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
     let cancelled = false;
     (async () => {
       let seeded: string[] = [];
+      // Claim the session for this browser's account first, so the grants it
+      // already carries come back before we read consent. A session that was
+      // never claimed, or a browser with no storage, simply skips this and
+      // behaves exactly as it did before accounts existed.
+      if (isConsole) {
+        const id = accountId();
+        if (id) {
+          try {
+            const res = await fetch(`/s/${sessionToken}/account`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ accountId: id }),
+            });
+            if (res.ok) {
+              const body = (await res.json()) as { consent?: unknown };
+              if (Array.isArray(body.consent)) {
+                seeded = body.consent.filter(
+                  (x): x is string => typeof x === "string",
+                );
+              }
+            }
+          } catch {
+            /* no account this load; the session still works */
+          }
+        }
+      }
       try {
         const res = await fetch(`/s/${sessionToken}/consent`);
         if (res.ok) {
@@ -158,7 +187,10 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           };
           if (body.autonomous === true) setAutonomous(true);
           if (Array.isArray(body.consent)) {
-            seeded = body.consent.filter((x): x is string => typeof x === "string");
+            seeded = unionOrigins(
+              seeded,
+              body.consent.filter((x): x is string => typeof x === "string"),
+            );
           }
         }
       } catch {
@@ -175,7 +207,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
         ...l,
         {
           kind: "system",
-          text: `pre-granted ${seeded.join(", ")} from session create`,
+          text: `already granted: ${seeded.join(", ")}`,
         },
       ]);
       // Open the first seeded origin so the viewport is not empty and ChatGPT
@@ -513,6 +545,31 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             ]);
           }}
         />
+        {isConsole ? (
+          <PasskeyBar
+            accountId={accountId()}
+            onSignedIn={(id) => {
+              // Adopting a different account means different grants. Re-claim
+              // this session under it and take what comes back.
+              void (async () => {
+                const res = await fetch(`/s/${sessionToken}/account`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ accountId: id }),
+                });
+                if (!res.ok) return;
+                const body = (await res.json()) as { consent?: unknown };
+                if (!Array.isArray(body.consent)) return;
+                const next = new Set(
+                  body.consent.filter((x): x is string => typeof x === "string"),
+                );
+                setConsented(next);
+                const reg = registrationRef.current;
+                if (reg) await syncTools(reg, next, observedRef.current);
+              })();
+            }}
+          />
+        ) : null}
         <Surface
           origin={pageOrigin}
           remoteTools={remoteTools}

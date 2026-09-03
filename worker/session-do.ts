@@ -47,6 +47,8 @@ import {
   stripProfilePaths,
 } from "./approval";
 import { parseBridgeRole } from "./bridge-role";
+import { claimDecision } from "./account";
+import { toAuditRows, type StoredAuditRow } from "./audit-rows";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 /**
@@ -205,7 +207,72 @@ export class SessionDO extends DurableObject<Env> {
     return { consent: this.readConsent(), autonomous: this.readAutonomous() };
   }
 
+  private accountId(): string | null {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'accountId' LIMIT 1`,
+      )
+      .toArray()[0];
+    return row?.value ?? null;
+  }
+
+  /**
+   * Bind this session to an account, inheriting its grants.
+   *
+   * Claimed, not replaced: the session keeps its token, its browser and
+   * anything already granted, and the account learns those grants too. First
+   * claim wins — the token is a bearer credential, so a second account must
+   * not be able to bind it and inherit the list.
+   */
+  async claimAccount(
+    accountId: string,
+  ): Promise<{ ok: boolean; consent?: string[]; error?: string }> {
+    const decision = claimDecision(this.accountId(), accountId);
+    if (!decision.ok) return { ok: false, error: decision.reason };
+    const { grants } = await this.env.ACCOUNT.getByName(accountId).claim(
+      this.sessionToken() ?? "",
+      this.readConsent(),
+    );
+    this.ctx.storage.sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('accountId', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      accountId,
+    );
+    this.writeConsent(grants);
+    this.sendState();
+    return { ok: true, consent: grants };
+  }
+
+  private sessionToken(): string | null {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'sessionToken' LIMIT 1`,
+      )
+      .toArray()[0];
+    return row?.value ?? null;
+  }
+
+  private writeConsent(origins: readonly string[]): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('consent', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      JSON.stringify([...origins]),
+    );
+  }
+
   async grantConsent(origin: string): Promise<{ ok: true }> {
+    // Write through to the account, if this session has been claimed, so the
+    // grant outlives the session's two hours. Not awaited: consent must answer
+    // without waiting on a second Durable Object, and the local mirror below
+    // is what every read in this class actually uses.
+    const accountId = this.accountId();
+    if (accountId && origin) {
+      this.ctx.waitUntil(
+        this.env.ACCOUNT.getByName(accountId)
+          .grant(origin)
+          .then(() => undefined),
+      );
+    }
     const allowed = this.readConsent();
     if (!allowed.includes(origin)) {
       allowed.push(origin);
@@ -230,17 +297,24 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   async listAudit(): Promise<AuditRow[]> {
-    const rows = this.ctx.storage.sql
-      .exec<{ origin: string; tool: string; field_names: string; ts: number }>(
-        `SELECT origin, tool, field_names, ts FROM audit ORDER BY ts DESC LIMIT 50`,
-      )
-      .toArray();
-    return rows.map((r) => ({
-      origin: r.origin,
-      tool: r.tool,
-      fieldNames: JSON.parse(r.field_names) as string[],
-      timestamp: r.ts,
-    }));
+    return toAuditRows(
+      this.ctx.storage.sql
+        .exec<StoredAuditRow>(
+          `SELECT origin, tool, field_names, ts FROM audit ORDER BY ts DESC LIMIT 50`,
+        )
+        .toArray(),
+    );
+  }
+
+  /**
+   * The account's log, which outlives this session. Falls back to the
+   * session's own rows when there is no account — an unclaimed session is
+   * still a working session.
+   */
+  async listHistory(): Promise<AuditRow[]> {
+    const id = this.accountId();
+    if (!id) return this.listAudit();
+    return this.env.ACCOUNT.getByName(id).listAudit();
   }
 
   /**
@@ -898,13 +972,29 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   private recordAudit(origin: string, tool: string, fieldNames: string[]): void {
+    const ts = Date.now();
     this.ctx.storage.sql.exec(
       `INSERT INTO audit (origin, tool, field_names, ts) VALUES (?, ?, ?, ?)`,
       origin,
       tool,
       JSON.stringify(fieldNames),
-      Date.now(),
+      ts,
     );
+    // Mirror to the account so the row outlives this session. Same reasoning
+    // as consent: the local table stays the read path the broadcast uses, and
+    // the durable copy is what a new session — or per-origin telemetry — can
+    // still see tomorrow.
+    const accountId = this.accountId();
+    if (accountId) {
+      this.ctx.waitUntil(
+        this.env.ACCOUNT.getByName(accountId).recordAudit(
+          origin,
+          tool,
+          fieldNames,
+          ts,
+        ),
+      );
+    }
     void this.listAudit()
       .then((rows) => this.broadcast({ v: 1, type: "audit", rows }))
       .catch(() => {

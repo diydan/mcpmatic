@@ -48,6 +48,15 @@ vi.mock("../worker/oauth/token", () => {
   );
   return { handleToken };
 });
+vi.mock("../worker/passkey-routes", () => {
+  const handlePasskey = vi.fn(async (req: Request, _e: unknown, sub: string) =>
+    new Response(JSON.stringify({ stubbed: "passkey", sub, url: req.url }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  return { handlePasskey };
+});
 vi.mock("../worker/mcp/server", () => {
   const handleMcp = vi.fn(async (req: Request) =>
     new Response(JSON.stringify({ stubbed: "mcp", url: req.url }), {
@@ -67,6 +76,7 @@ vi.mock("../worker/oauth/client-do", () => ({
 vi.mock("../worker/oauth/code-do", () => ({
   OAuthCodeDO: class OAuthCodeDO {},
 }));
+vi.mock("../worker/account-do", () => ({ AccountDO: class AccountDO {} }));
 
 // Pull the mocked handles AFTER the mocks are registered. Imports below
 // this point (worker default export) refer to the mocked modules.
@@ -87,12 +97,28 @@ import worker from "../worker/index";
  * the routes that need them.
  */
 function makeEnv(): Env & {
+  __claimAccount: ReturnType<typeof vi.fn>;
+  __listHistory: ReturnType<typeof vi.fn>;
   __sessionGetByName: ReturnType<typeof vi.fn>;
   __oauthClientGetByName: ReturnType<typeof vi.fn>;
   __oauthCodeGetByName: ReturnType<typeof vi.fn>;
 } {
+  const claimAccount = vi.fn(async (_accountId: string) => ({
+    ok: true,
+    consent: ["https://www.allbirds.com"],
+  }));
+  const listHistory = vi.fn(async () => [
+    {
+      origin: "https://www.allbirds.com",
+      tool: "fill_checkout_on_allbirds_com",
+      fieldNames: ["address.line1"],
+      timestamp: 1,
+    },
+  ]);
   const sessionGetByName = vi.fn((_name: string) => ({
     initSession: async (_token: string) => {},
+    claimAccount,
+    listHistory,
     fetch: async (_req: Request) => new Response(null, { status: 200 }),
   }));
   const oauthClientGetByName = vi.fn((_name: string) => ({
@@ -106,9 +132,13 @@ function makeEnv(): Env & {
     OAUTH_CLIENT: { getByName: oauthClientGetByName },
     OAUTH_CODE: { getByName: oauthCodeGetByName },
     __sessionGetByName: sessionGetByName,
+    __claimAccount: claimAccount,
+    __listHistory: listHistory,
     __oauthClientGetByName: oauthClientGetByName,
     __oauthCodeGetByName: oauthCodeGetByName,
   } as unknown as Env & {
+    __claimAccount: ReturnType<typeof vi.fn>;
+    __listHistory: ReturnType<typeof vi.fn>;
     __sessionGetByName: ReturnType<typeof vi.fn>;
     __oauthClientGetByName: ReturnType<typeof vi.fn>;
     __oauthCodeGetByName: ReturnType<typeof vi.fn>;
@@ -255,5 +285,112 @@ describe("worker/index.ts — route wiring", () => {
       makeEnv() as unknown as Env,
     );
     expect(res.status).toBe(404);
+  });
+});
+describe("POST /s/:token/account", () => {
+  const TOKEN = "a".repeat(64);
+  const ACCOUNT = "b".repeat(64);
+
+  function post(body: unknown) {
+    return new Request(`https://worker.local/s/${TOKEN}/account`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("claims the session for the account and returns the inherited grants", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(post({ accountId: ACCOUNT }), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      consent: ["https://www.allbirds.com"],
+    });
+    expect(env.__claimAccount).toHaveBeenCalledWith(ACCOUNT);
+  });
+
+  it("rejects a malformed account id without touching the DO", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(post({ accountId: "nope" }), env);
+    expect(res.status).toBe(400);
+    expect(env.__claimAccount).not.toHaveBeenCalled();
+  });
+
+  it("refuses a session already claimed by another account", async () => {
+    const env = makeEnv();
+    env.__claimAccount.mockResolvedValueOnce({
+      ok: false,
+      error: "claimed-by-another",
+    });
+    const res = await worker.fetch!(post({ accountId: ACCOUNT }), env);
+    expect(res.status).toBe(409);
+  });
+});
+
+describe("GET /s/:token/audit", () => {
+  const TOKEN = "a".repeat(64);
+
+  it("returns the durable log the account holds", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(
+      new Request(`https://worker.local/s/${TOKEN}/audit`),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      rows: [
+        {
+          origin: "https://www.allbirds.com",
+          tool: "fill_checkout_on_allbirds_com",
+          fieldNames: ["address.line1"],
+          timestamp: 1,
+        },
+      ],
+    });
+    expect(env.__listHistory).toHaveBeenCalled();
+  });
+
+  it("does not accept a write", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(
+      new Request(`https://worker.local/s/${TOKEN}/audit`, { method: "POST" }),
+      env,
+    );
+    expect(res.status).toBe(404);
+    expect(env.__listHistory).not.toHaveBeenCalled();
+  });
+});
+
+describe("/account/passkey/*", () => {
+  it("dispatches each ceremony step to the passkey handler", async () => {
+    const { handlePasskey } = await import("../worker/passkey-routes");
+    for (const sub of [
+      "register/options",
+      "register/verify",
+      "login/options",
+      "login/verify",
+    ]) {
+      const res = await worker.fetch!(
+        new Request(`https://worker.local/account/passkey/${sub}`, {
+          method: "POST",
+        }),
+        makeEnv(),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ stubbed: "passkey", sub });
+    }
+    expect(handlePasskey).toHaveBeenCalledTimes(4);
+  });
+
+  it("404s an unknown account path without calling the handler", async () => {
+    const { handlePasskey } = await import("../worker/passkey-routes");
+    vi.mocked(handlePasskey).mockClear();
+    const res = await worker.fetch!(
+      new Request("https://worker.local/account/nope", { method: "POST" }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(404);
+    expect(handlePasskey).not.toHaveBeenCalled();
   });
 });
