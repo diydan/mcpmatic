@@ -350,6 +350,7 @@ export class SessionDO extends DurableObject<Env> {
     name: string,
     args: Record<string, unknown>,
   ): Promise<{ ok: boolean; text: string }> {
+    const startedAt = Date.now();
     const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
     // The MCP entry, and only this one, strips caller-supplied profile paths.
     // Otherwise a client could pass {"address.line1": "…"} and route around
@@ -368,7 +369,35 @@ export class SessionDO extends DurableObject<Env> {
     }
     const auditOrigin = manifest?.origin ?? this.currentOrigin() ?? "";
     this.recordAudit(auditOrigin, name, result.resolved ?? []);
+    this.recordSiteCall(manifest, result, Date.now() - startedAt);
     return { ok: result.ok, text: result.text };
+  }
+
+  /**
+   * What agents did to this site's tools, for the site's owner.
+   *
+   * A different record from the audit row written beside it, kept in a
+   * different place on purpose: the audit row is this person's account of
+   * which of their fields travelled, and this is the merchant's account of how
+   * their tool behaved for everyone. Nothing here identifies the caller, and
+   * the tool is named as the *site* knows it, not as we qualify it.
+   *
+   * Not awaited: telemetry must never be in the path of a tool result.
+   */
+  private recordSiteCall(
+    manifest: { origin: string; nativeName?: string; name: string } | null | undefined,
+    result: { ok: boolean; reason?: string },
+    ms: number,
+  ): void {
+    if (!manifest) return;
+    this.ctx.waitUntil(
+      this.env.SITE.getByName(manifest.origin).recordCall(
+        manifest.nativeName ?? manifest.name,
+        result.ok,
+        result.ok ? null : (result.reason ?? "failed"),
+        ms,
+      ),
+    );
   }
 
   async destroy(): Promise<void> {
@@ -560,7 +589,8 @@ export class SessionDO extends DurableObject<Env> {
   ): Promise<void> {
     this.driving = true;
     this.sendState();
-    let result: { ok: boolean; text: string; resolved?: string[] };
+    const startedAt = Date.now();
+    let result: { ok: boolean; text: string; resolved?: string[]; reason?: string };
     try {
       result = await this.runTool(name, args);
     } catch (err) {
@@ -587,6 +617,7 @@ export class SessionDO extends DurableObject<Env> {
       name,
       result.resolved ?? [],
     );
+    this.recordSiteCall(manifest, result, Date.now() - startedAt);
   }
 
   /**
@@ -625,7 +656,13 @@ export class SessionDO extends DurableObject<Env> {
   private async runTool(
     name: string,
     args: Record<string, unknown>,
-  ): Promise<{ ok: boolean; text: string; resolved?: string[] }> {
+  ): Promise<{
+    ok: boolean;
+    text: string;
+    resolved?: string[];
+    /** Failure class for site telemetry. Never a value or an argument. */
+    reason?: string;
+  }> {
     if (name === "list_available_origins") {
       return {
         ok: true,
@@ -808,7 +845,11 @@ export class SessionDO extends DurableObject<Env> {
       // is not there, say so — empty steps must not report a fake success. And
       // say *which* of the three failures it was.
       if (!native.used) {
-        return { ok: false, text: nativeFailure(manifest.nativeName, manifest.origin, native) };
+        return {
+          ok: false,
+          text: nativeFailure(manifest.nativeName, manifest.origin, native),
+          reason: native.reason,
+        };
       }
       this.setCurrentOrigin(manifest.origin);
       const how = native.polyfilled

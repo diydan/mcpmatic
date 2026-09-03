@@ -2,12 +2,13 @@ import { SessionDO } from "./session-do";
 import { OAuthClientDO } from "./oauth/client-do";
 import { OAuthCodeDO } from "./oauth/code-do";
 import { AccountDO } from "./account-do";
+import { SiteDO } from "./site-do";
 import { FACADE_HEADERS } from "./facade-headers";
 import { isPrivateUrl } from "./is-private-url";
 import { makeResolve4 } from "./doh-resolve4";
 import { isAccountId } from "./account";
 
-export { SessionDO, OAuthClientDO, OAuthCodeDO, AccountDO };
+export { SessionDO, OAuthClientDO, OAuthCodeDO, AccountDO, SiteDO };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -76,6 +77,12 @@ export default {
       // 409: the session is already someone else's. First claim wins.
       if (!claimed.ok) return json({ ok: false, error: claimed.error }, 409);
       return json({ ok: true, consent: claimed.consent });
+    }
+
+    // Site-owner telemetry, gated on proving control of the origin.
+    if (path.startsWith("/site/")) {
+      const { handleSite } = await import("./site-routes");
+      return handleSite(request, env, path.slice("/site/".length));
     }
 
     // WebAuthn ceremony. Not under /s/<token>: a login happens *before* there

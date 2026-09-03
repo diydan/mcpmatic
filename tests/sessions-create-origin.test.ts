@@ -48,6 +48,7 @@ vi.mock("../worker/session-do", () => ({
   },
 }));
 vi.mock("../worker/account-do", () => ({ AccountDO: class AccountDO {} }));
+vi.mock("../worker/site-do", () => ({ SiteDO: class SiteDO {} }));
 
 // Pull the mocked handles AFTER the mocks are registered.
 import { isPrivateUrl } from "../worker/is-private-url";

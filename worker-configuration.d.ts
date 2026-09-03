@@ -15,6 +15,11 @@ declare namespace Cloudflare {
      * no field value — see worker/account-do.ts.
      */
     ACCOUNT: DurableObjectNamespace<import("./worker/account-do").AccountDO>;
+    /**
+     * One DO per origin, holding what agents did to that site's own WebMCP
+     * tools. Never per user — see worker/site-do.ts.
+     */
+    SITE: DurableObjectNamespace<import("./worker/site-do").SiteDO>;
     OAUTH_TOKENS: KVNamespace;
     /**
      * Generated (and human-blessed) WebMCP manifests, keyed two ways:
