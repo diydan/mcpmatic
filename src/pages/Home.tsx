@@ -54,7 +54,7 @@ export function Home() {
                 sessionToken: string;
                 origin?: string | null;
               };
-              nav(`/s/${sessionToken}`, {
+              nav(`/c/${sessionToken}`, {
                 state: { origin: granted || undefined },
               });
             } catch {
@@ -73,7 +73,7 @@ export function Home() {
               {store.kind === "shopify-webmcp"
                 ? "Shopify native"
                 : store.label === "GOV.UK"
-                  ? "Bless"
+                  ? "Approve"
                   : "Façade"}
             </span>
             <h2>{store.label}</h2>

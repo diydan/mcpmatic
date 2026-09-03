@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { offersFor } from "../src/lib/offers";
 
 describe("offersFor", () => {
-  it("suggests a profile bless when fill_checkout is registered", () => {
+  it("suggests a profile approval when fill_checkout is registered", () => {
     const offers = offersFor({
       registered: [
         {

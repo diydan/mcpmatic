@@ -44,17 +44,17 @@ const manifests: ToolManifest[] = [
 
 function harness(over: Partial<Parameters<typeof createRegistration>[0]> = {}) {
   const executeRemote = vi.fn(async () => "ok");
-  const bless = vi.fn(async () => true);
+  const approve = vi.fn(async () => true);
   const registration = createRegistration({
     manifests,
     consented: new Set(),
     executeRemote,
-    bless,
+    approve,
     resolveFields: (paths) =>
       Object.fromEntries(paths.map((p) => [p, "EC2A 3DZ"])),
     ...over,
   });
-  return { registration, executeRemote, bless };
+  return { registration, executeRemote, approve };
 }
 
 afterEach(() => {
@@ -146,9 +146,9 @@ describe("incremental registration", () => {
 });
 
 describe("execute refuses loudly", () => {
-  it("throws when bless is denied, so the agent turn can complete", async () => {
+  it("throws when approve is denied, so the agent turn can complete", async () => {
     const mc = ensureModelContext();
-    const { registration, executeRemote } = harness({ bless: async () => false });
+    const { registration, executeRemote } = harness({ approve: async () => false });
     await registration.sync(new Set([ALLBIRDS]));
 
     const tool = (await mc.getTools()).find(
@@ -158,7 +158,7 @@ describe("execute refuses loudly", () => {
     expect(executeRemote).not.toHaveBeenCalled();
   });
 
-  it("resolves fields only after bless, and only the declared path", async () => {
+  it("resolves fields only after approve, and only the declared path", async () => {
     const mc = ensureModelContext();
     const { registration, executeRemote } = harness();
     await registration.sync(new Set([ALLBIRDS]));
@@ -170,6 +170,26 @@ describe("execute refuses loudly", () => {
     expect(executeRemote).toHaveBeenCalledWith("fill_checkout_on_allbirds_com", {
       "address.postcode": "EC2A 3DZ",
     });
+  });
+
+  it("sends no fields when no profile reader is supplied", async () => {
+    // The façade at /s/<token> is loaded by an agent and holds no profile. A
+    // fillsFrom tool still registers and still runs; the fields are supplied
+    // later by the console, through the DO's approval. Prompting here would
+    // put the dialog in an automated browser.
+    const { registration, executeRemote, approve } = harness({
+      approve: undefined,
+      resolveFields: undefined,
+    });
+    const mc = ensureModelContext();
+    await registration.sync(new Set([ALLBIRDS]));
+
+    const tool = (await mc.getTools()).find(
+      (t) => t.name === "fill_checkout_on_allbirds_com",
+    );
+    await mc.executeTool(tool!, {});
+    expect(approve).not.toHaveBeenCalled();
+    expect(executeRemote).toHaveBeenCalledWith("fill_checkout_on_allbirds_com", {});
   });
 
   it("registers observed remote tools origin-qualified without colliding with a manifest", async () => {

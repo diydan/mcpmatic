@@ -7,14 +7,21 @@ Shopify storefronts already register `search_catalog`, `update_cart`, and
 proxies them, origin-qualified, so ChatGPT — which only sees tools on the
 page it loaded — can still call them. Sites with no WebMCP get a synthesised
 tool. Observed tools on the open page are registered the same way. A local
-profile fills only the fields a tool named, after the human blesses them.
+profile fills only the fields a tool named, after the human approves them.
 
 **Live:** <https://mcpmatic.dan-3c7.workers.dev> — open it, grant an origin,
 and the tools appear. No login, no key, no install.
 
+One session, two views. `/c/<token>` is the **console** — what you open. It
+holds the profile, and it is the only view that can approve a field leaving
+your machine. `/s/<token>` is the **façade** — what an agent loads; it
+registers the tools and holds no profile. Both can be connected at once, which
+is the normal way to use this: the agent works on the façade while you watch
+and approve on the console.
+
 In ChatGPT desktop use **GPT-5.6 Sol or Terra**: Luna has WebMCP disabled, and
-Enterprise/Edu workspaces have no site tools. Open the same `/s/<token>` URL
-there and grant the origin in that view.
+Enterprise/Edu workspaces have no site tools. Give it the `/s/<token>` URL and
+grant the origin in that view.
 
 Architecture below. Design decisions are recorded in the commit history.
 
@@ -28,6 +35,11 @@ learns a shipping address when checkout is filled.
 - Only declared paths resolve (`fillsFrom: ["address.postcode"]` is that key).
 - Values are never logged. The audit table has no value column.
 - Native WebMCP on the remote page is preferred over click replay.
+- A tool that draws on the profile cannot run unattended. It suspends until a
+  human approves it on the console, naming the exact fields; with no console
+  attached it returns `needs-console` rather than filling blanks and reporting
+  success. An agent holding the same token cannot answer for you — the façade
+  is not sent the request.
 - `document.modelContext` is a browser API behind a Chrome origin trial, and the
   remote browser does not have it. This session installs the API into the remote
   page before the page's own scripts run, so a storefront that ships WebMCP can
@@ -47,7 +59,7 @@ session page. That is this.
 | [allbirds.com](https://www.allbirds.com) | Shopify native | `search_catalog_on_allbirds_com`, `update_cart_on_allbirds_com`, `proceed_to_checkout_on_allbirds_com`, `fill_checkout_on_allbirds_com`, plus whatever else the store registers, observed live |
 | [brooklinen.com](https://www.brooklinen.com) | Shopify native | same pack, `_on_brooklinen_com` |
 | [kayak.com](https://www.kayak.com) | Synthesised | `search_flights_on_kayak_com` |
-| [gov.uk](https://www.gov.uk/find-local-council) | Synthesised + bless | `find_local_council_on_gov_uk` (postcode only) |
+| [gov.uk](https://www.gov.uk/find-local-council) | Synthesised + approve | `find_local_council_on_gov_uk` (postcode only) |
 
 You browse the remote page; ChatGPT calls the tools on this façade. Grant any
 https origin — `list_remote_tools` reports its real WebMCP surface, and

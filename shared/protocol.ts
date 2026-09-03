@@ -55,7 +55,7 @@ export type ClientMessage =
    * Completion of one in-page agent turn. `callId` is the OpenAI tool-call id the
    * DO broadcast in `tool_call` — not the `tool_exec` correlation UUID. The page
    * sends exactly one of these per `tool_call` it receives, on every exit path
-   * (success, bless denied, tool not registered, timeout, throw), so an agent
+   * (success, approval denied, tool not registered, timeout, throw), so an agent
    * turn can never strand.
    */
   | {
@@ -67,6 +67,19 @@ export type ClientMessage =
     }
   | { v: 1; type: "screencast"; on: boolean }
   | { v: 1; type: "autonomous"; on: boolean }
+  /**
+   * The console's answer to an `approval_request`. `fills` is keyed by dotted
+   * profile path, matching `resolveFields` output and what `step.from` reads.
+   * Only the paths the request named are honoured; the console does not widen
+   * the set.
+   */
+  | {
+      v: 1;
+      type: "approval_result";
+      id: string;
+      ok: boolean;
+      fills?: Record<string, string>;
+    }
   | { v: 1; type: "ping" };
 
 export type ServerMessage =
@@ -99,6 +112,19 @@ export type ServerMessage =
       autonomous?: boolean;
     }
   | { v: 1; type: "audit"; rows: AuditRow[] }
+  /**
+   * A suspended tool call waiting on a human. Carries field *names* only —
+   * there is no value on the server to send, which is the point.
+   */
+  | {
+      v: 1;
+      type: "approval_request";
+      id: string;
+      origin: string;
+      tool: string;
+      fieldNames: string[];
+      expiresAt: number;
+    }
   | { v: 1; type: "error"; message: string }
   | { v: 1; type: "pong" };
 

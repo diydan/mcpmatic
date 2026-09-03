@@ -3,7 +3,7 @@ import { qualifiedToolName } from "../../shared/origin";
 import type { DiscoveredTool } from "../../shared/protocol";
 import { ensureModelContext } from "./webmcp-polyfill";
 
-export type BlessRequest = {
+export type ApprovalRequest = {
   origin: string;
   tool: string;
   fieldNames: string[];
@@ -17,8 +17,14 @@ export type RegisterOpts = {
     name: string,
     args: Record<string, unknown>,
   ) => Promise<string>;
-  bless: (req: BlessRequest) => Promise<boolean>;
-  resolveFields: (paths: readonly string[]) => Record<string, string>;
+  /**
+   * Present only on the console at `/c/<token>`, which is where the profile
+   * lives. The façade at `/s/<token>` is loaded by an agent and supplies
+   * neither — a `fillsFrom` tool registered there still runs, and the DO
+   * suspends it for the console to approve.
+   */
+  approve?: (req: ApprovalRequest) => Promise<boolean>;
+  resolveFields?: (paths: readonly string[]) => Record<string, string>;
 };
 
 export type SyncReport = {
@@ -149,8 +155,10 @@ export function createRegistration(opts: RegisterOpts): Registration {
         throw new Error(`origin not consented: ${origin}`);
       }
       let fills: Record<string, string> = {};
-      if (fillsFrom?.length) {
-        const ok = await opts.bless({
+      // No profile reader here means this is the façade. Send the input as it
+      // came; the fields are the console's to release, not this page's.
+      if (fillsFrom?.length && opts.approve && opts.resolveFields) {
+        const ok = await opts.approve({
           origin: origin ?? location.origin,
           tool: spec.name,
           fieldNames: fillsFrom,

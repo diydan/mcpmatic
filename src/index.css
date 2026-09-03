@@ -390,7 +390,7 @@ input {
   padding: 0.6rem 1.1rem 1rem;
 }
 
-.bless {
+.approval {
   position: fixed;
   inset: 0;
   background: color-mix(in srgb, var(--bg) 72%, transparent);
@@ -398,7 +398,7 @@ input {
   place-items: center;
   padding: 1.2rem;
 }
-.bless__card {
+.approval__card {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 24px;
@@ -407,8 +407,8 @@ input {
   width: 100%;
   box-shadow: var(--shadow);
 }
-.bless__card ul { padding-left: 1.1rem; }
-.bless__actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+.approval__card ul { padding-left: 1.1rem; }
+.approval__actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
 
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
@@ -417,4 +417,34 @@ input {
 
 @media (prefers-reduced-motion: reduce) {
   body { transition: none; }
+}
+
+/* Console only. The passkey is what lets this account leave this browser. */
+.passkey {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.passkey button {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.passkey button:hover:not(:disabled) { border-color: var(--primary); }
+.passkey button:disabled { opacity: 0.5; cursor: default; }
+
+.passkey__status {
+  color: var(--muted);
+  font-size: 0.85rem;
 }

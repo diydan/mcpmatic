@@ -51,6 +51,8 @@ vi.mock("../worker/oauth/client-do", () => ({
 vi.mock("../worker/oauth/code-do", () => ({
   OAuthCodeDO: class OAuthCodeDO {},
 }));
+vi.mock("../worker/account-do", () => ({ AccountDO: class AccountDO {} }));
+vi.mock("../worker/site-do", () => ({ SiteDO: class SiteDO {} }));
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";

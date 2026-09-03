@@ -126,3 +126,33 @@ describe("buildToolList with a registry", () => {
     expect(list.some((t) => t.name === "search_widgets_on_example_com")).toBe(false);
   });
 });
+describe("approval-required tools are labelled", () => {
+  const APPROVAL_NOTE = "Requires human approval in the mcpmatic console.";
+
+  it("marks a tool that declares fillsFrom", async () => {
+    const list = await buildToolList(new Set(["https://www.allbirds.com"]));
+    const fill = list.find((t) => t.name === "fill_checkout_on_allbirds_com");
+    expect(fill?.description).toContain(APPROVAL_NOTE);
+  });
+
+  it("leaves a tool without fillsFrom alone", async () => {
+    const list = await buildToolList(new Set(["https://www.allbirds.com"]));
+    const search = list.find((t) => t.name === "search_catalog_on_allbirds_com");
+    expect(search?.description).not.toContain(APPROVAL_NOTE);
+  });
+});
+
+describe("check_approval is on the surface", () => {
+  it("is a spine tool, so a pending approval can be collected", async () => {
+    // requestBounded hands back an id rather than holding the caller open.
+    // Without a tool to redeem it, that id is useless.
+    const list = await buildToolList(new Set());
+    const check = list.find((t) => t.name === "check_approval");
+    expect(check).toBeDefined();
+    expect(check?.inputSchema.required).toEqual(["id"]);
+  });
+
+  it("is always present, like the rest of the spine", async () => {
+    expect(SPINE_NAMES).toContain("check_approval");
+  });
+});

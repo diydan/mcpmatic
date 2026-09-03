@@ -1,11 +1,14 @@
 import { SessionDO } from "./session-do";
 import { OAuthClientDO } from "./oauth/client-do";
 import { OAuthCodeDO } from "./oauth/code-do";
+import { AccountDO } from "./account-do";
+import { SiteDO } from "./site-do";
 import { FACADE_HEADERS } from "./facade-headers";
 import { isPrivateUrl } from "./is-private-url";
 import { makeResolve4 } from "./doh-resolve4";
+import { isAccountId } from "./account";
 
-export { SessionDO, OAuthClientDO, OAuthCodeDO };
+export { SessionDO, OAuthClientDO, OAuthCodeDO, AccountDO, SiteDO };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -24,9 +27,26 @@ export default {
     }
 
     const consentMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/consent$/);
+    // Grant and revoke share one expiry rule: a session past its TTL answers
+    // 410, the same status the bridge returns. The DO throws; the worker
+    // translates, because status codes are a worker concern.
+    const withExpiry = async <T>(
+      run: () => Promise<T>,
+    ): Promise<T | Response> => {
+      try {
+        return await run();
+      } catch (err) {
+        if (err instanceof Error && err.message === "session expired") {
+          return json({ ok: false, error: "session expired" }, 410);
+        }
+        throw err;
+      }
+    };
     if (consentMatch && request.method === "GET") {
       const stub = env.SESSION.getByName(consentMatch[1]);
-      return json(await stub.listConsent());
+      const listed = await withExpiry(() => stub.listConsent());
+      if (listed instanceof Response) return listed;
+      return json(listed);
     }
     if (consentMatch && request.method === "POST") {
       const body = (await request.json()) as { origin?: unknown };
@@ -41,8 +61,73 @@ export default {
         return json({ ok: false, error: "origin must be https" }, 400);
       }
       const stub = env.SESSION.getByName(consentMatch[1]);
-      await stub.grantConsent(origin);
+      const granted = await withExpiry(() => stub.grantConsent(origin));
+      if (granted instanceof Response) return granted;
       return json({ ok: true, origin });
+    }
+    if (consentMatch && request.method === "DELETE") {
+      // Same validation as the grant: an origin is an origin, whichever way
+      // the consent moves. The DO treats an unknown origin as a no-op.
+      const body = (await request.json()) as { origin?: unknown };
+      const origin = typeof body.origin === "string" ? body.origin : "";
+      let parsed: URL;
+      try {
+        parsed = new URL(origin);
+      } catch {
+        return json({ ok: false, error: "origin must be https" }, 400);
+      }
+      if (parsed.protocol !== "https:") {
+        return json({ ok: false, error: "origin must be https" }, 400);
+      }
+      const stub = env.SESSION.getByName(consentMatch[1]);
+      const revoked = await withExpiry(() => stub.revokeConsent(origin));
+      if (revoked instanceof Response) return revoked;
+      return json({ ok: true, consent: revoked.consent });
+    }
+
+    // Read-only. The durable log the account holds, or the session's own rows
+    // when it has no account. Rows are {origin, tool, fieldNames, ts} — there
+    // is no value column to expose.
+    const auditMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/audit$/);
+    if (auditMatch && request.method === "GET") {
+      const stub = env.SESSION.getByName(auditMatch[1]);
+      return json({ rows: await stub.listHistory() });
+    }
+
+    // Bind a session to an account so its grants outlive the session's TTL.
+    // The account id is a bearer credential the console holds (see
+    // worker/account.ts) — validated for shape here, the way every other
+    // policy check in this file lives in the worker rather than the DO.
+    const accountMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/account$/);
+    if (accountMatch && request.method === "POST") {
+      let body: { accountId?: unknown };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return json({ ok: false, error: "invalid body" }, 400);
+      }
+      if (!isAccountId(body.accountId)) {
+        return json({ ok: false, error: "invalid accountId" }, 400);
+      }
+      const stub = env.SESSION.getByName(accountMatch[1]);
+      const claimed = await stub.claimAccount(body.accountId);
+      // 409: the session is already someone else's. First claim wins.
+      if (!claimed.ok) return json({ ok: false, error: claimed.error }, 409);
+      return json({ ok: true, consent: claimed.consent });
+    }
+
+    // Site-owner telemetry, gated on proving control of the origin.
+    if (path.startsWith("/site/")) {
+      const { handleSite } = await import("./site-routes");
+      return handleSite(request, env, path.slice("/site/".length));
+    }
+
+    // WebAuthn ceremony. Not under /s/<token>: a login happens *before* there
+    // is a session to speak of, and registration binds an authenticator to the
+    // account rather than to whichever session is open.
+    if (path.startsWith("/account/passkey/")) {
+      const { handlePasskey } = await import("./passkey-routes");
+      return handlePasskey(request, env, path.slice("/account/passkey/".length));
     }
 
     if (path === "/mcp") {
@@ -125,7 +210,10 @@ async function createSession(request: Request, env: Env): Promise<Response> {
   const origin = new URL(request.url).origin;
   return json({
     sessionToken,
+    // What an agent loads: registers the tools, holds no profile.
     url: `${origin}/s/${sessionToken}`,
+    // What a human opens: the only view that can answer an approval.
+    consoleUrl: `${origin}/c/${sessionToken}`,
     origin: seededOrigin ?? null,
   });
 }
