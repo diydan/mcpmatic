@@ -1,6 +1,7 @@
 import type { McpToolDescriptor } from "../../shared/mcp";
 import type { ToolManifest } from "../../shared/manifest";
 import { MANIFESTS } from "../manifests";
+import { getRegistryEntry, blessedManifests, type KvLike } from "../manifest-registry";
 
 /**
  * The three always-on tools. Same names the WebMCP façade registers, so an
@@ -40,7 +41,10 @@ export const SPINE_NAMES = SPINE.map((t) => t.name);
  * manifests are included only for granted origins — ungranted origins are
  * invisible, not "denied at call time."
  */
-export function buildToolList(consented: ReadonlySet<string>): McpToolDescriptor[] {
+export async function buildToolList(
+  consented: ReadonlySet<string>,
+  kv?: KvLike,
+): Promise<McpToolDescriptor[]> {
   const out: McpToolDescriptor[] = [...SPINE];
   for (const m of MANIFESTS) {
     if (!consented.has(m.origin)) continue;
@@ -49,6 +53,18 @@ export function buildToolList(consented: ReadonlySet<string>): McpToolDescriptor
       description: m.description,
       inputSchema: m.inputSchema as unknown as Record<string, unknown>,
     });
+  }
+  if (kv) {
+    for (const origin of consented) {
+      const entry = await getRegistryEntry(kv, origin);
+      for (const m of blessedManifests(entry)) {
+        out.push({
+          name: m.name,
+          description: m.description,
+          inputSchema: m.inputSchema as unknown as Record<string, unknown>,
+        });
+      }
+    }
   }
   return out;
 }
