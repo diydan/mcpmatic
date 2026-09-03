@@ -62,7 +62,11 @@ export function Viewport({ jpeg, driving, browser, onInput }: Props) {
       <header className="viewport__bar">
         <span className="viewport__dot" data-live={browser === "live"} />
         <span>{STATUS[browser]}</span>
-        {driving ? <span className="viewport__driving">agent driving</span> : null}
+        {driving ? (
+          <span className="viewport__driving">agent driving</span>
+        ) : browser === "live" ? (
+          <span className="viewport__you">you drive</span>
+        ) : null}
       </header>
       <div className="viewport__stage">
         <canvas

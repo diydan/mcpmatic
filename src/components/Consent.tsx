@@ -6,9 +6,17 @@ type Props = {
   origins: Array<{ origin: string; label: string; kind: StoreKind }>;
   consented: ReadonlySet<string>;
   onGrant: (origin: string) => void;
+  autonomous: boolean;
+  onAutonomous: (on: boolean) => void;
 };
 
-export function Consent({ origins, consented, onGrant }: Props) {
+export function Consent({
+  origins,
+  consented,
+  onGrant,
+  autonomous,
+  onAutonomous,
+}: Props) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const known = new Set(origins.map((o) => o.origin));
@@ -21,6 +29,20 @@ export function Consent({ origins, consented, onGrant }: Props) {
       <p>
         ChatGPT is granted this page. Tools for another origin stay unregistered
         until you say so. Shopify stores keep their own WebMCP; we only proxy it.
+      </p>
+      <button
+        type="button"
+        className="consent__switch"
+        role="switch"
+        aria-checked={autonomous}
+        onClick={() => onAutonomous(!autonomous)}
+      >
+        Autonomous
+      </button>
+      <p className="consent__note">
+        {autonomous
+          ? "On: every demo origin is granted, and any site you or ChatGPT open is granted. Bless still asks before profile fields leave."
+          : "Off: grant each origin yourself. Turn on to let ChatGPT move without a grant click."}
       </p>
       <ul>
         {origins.map((o) => {
@@ -86,7 +108,8 @@ export function Consent({ origins, consented, onGrant }: Props) {
         </button>
       </form>
       <p className="consent__note">
-        {error ?? "A site you add gets navigate_to and get_page_state. Tools of its own need a manifest, or WebMCP on the site itself."}
+        {error ??
+          "A site you add is inspected for WebMCP. ChatGPT gets those tools, origin-qualified."}
       </p>
     </section>
   );

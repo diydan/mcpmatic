@@ -19,8 +19,8 @@ export function Home() {
       <p className="lede">
         One conversation, many origins. Shopify stores already speak WebMCP —
         we proxy those tools, origin-qualified. Sites that have none get a
-        façade. Your profile never uploads wholesale; a call takes only the
-        fields it named.
+        façade. You browse; ChatGPT calls the tools on this page. A call takes
+        only the profile fields it named.
       </p>
       <p className="muted">
         ChatGPT’s tools are per-page. Shopify’s tools live on the storefront.
@@ -50,10 +50,13 @@ export function Home() {
                 setError(msg || "request failed");
                 return;
               }
-              const { sessionToken } = (await res.json()) as {
+              const { sessionToken, origin: granted } = (await res.json()) as {
                 sessionToken: string;
+                origin?: string | null;
               };
-              nav(`/s/${sessionToken}`);
+              nav(`/s/${sessionToken}`, {
+                state: { origin: granted || undefined },
+              });
             } catch {
               setError("request failed");
             } finally {
@@ -67,7 +70,11 @@ export function Home() {
         {STORES.map((store) => (
           <article key={store.origin} className="use-case">
             <span className="badge">
-              {store.kind === "shopify-webmcp" ? "Shopify native" : "Façade"}
+              {store.kind === "shopify-webmcp"
+                ? "Shopify native"
+                : store.label === "GOV.UK"
+                  ? "Bless"
+                  : "Façade"}
             </span>
             <h2>{store.label}</h2>
             <p className="muted">{store.blurb}</p>

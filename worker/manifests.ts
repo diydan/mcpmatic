@@ -9,7 +9,7 @@ export function manifestFor(name: string): ToolManifest | undefined {
 
 export function originOfTool(name: string): string | null {
   if (name === "get_page_state" || name === "list_available_origins") return null;
-  if (name === "list_remote_tools") return null;
+  if (name === "list_remote_tools" || name === "call_remote_tool") return null;
   if (name === "navigate_to") return null;
   return manifestFor(name)?.origin ?? null;
 }

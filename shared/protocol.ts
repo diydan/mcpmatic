@@ -6,6 +6,13 @@ export type ToolSchema = {
   inputSchema: Record<string, unknown>;
 };
 
+/** A tool the remote page registered of its own. Schemas travel; values do not. */
+export type DiscoveredTool = {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+};
+
 export type AuditRow = {
   origin: string;
   tool: string;
@@ -59,6 +66,7 @@ export type ClientMessage =
       result: string;
     }
   | { v: 1; type: "screencast"; on: boolean }
+  | { v: 1; type: "autonomous"; on: boolean }
   | { v: 1; type: "ping" };
 
 export type ServerMessage =
@@ -83,8 +91,12 @@ export type ServerMessage =
       v: 1;
       type: "state";
       origin: string | null;
+      url?: string | null;
       driving: boolean;
       browser: BrowserState;
+      remoteTools?: DiscoveredTool[];
+      consented?: string[];
+      autonomous?: boolean;
     }
   | { v: 1; type: "audit"; rows: AuditRow[] }
   | { v: 1; type: "error"; message: string }

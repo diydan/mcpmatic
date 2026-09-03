@@ -3,9 +3,26 @@ import { allManifests, STORES } from "../shared/stores";
 import { isWebMcpToolName } from "../shared/manifest";
 
 describe("demo stores", () => {
-  it("includes two Shopify origins and one façade origin", () => {
-    const kinds = STORES.map((s) => s.kind).sort();
-    expect(kinds).toEqual(["facade", "shopify-webmcp", "shopify-webmcp"]);
+  it("includes two Shopify origins, Kayak, and a GOV.UK bless demo", () => {
+    const byKind = Object.fromEntries(
+      ["shopify-webmcp", "facade"].map((k) => [
+        k,
+        STORES.filter((s) => s.kind === k).map((s) => s.origin),
+      ]),
+    );
+    expect(byKind["shopify-webmcp"]).toEqual([
+      "https://www.allbirds.com",
+      "https://www.brooklinen.com",
+    ]);
+    expect(byKind.facade).toContain("https://www.kayak.com");
+    expect(byKind.facade).toContain("https://www.gov.uk");
+  });
+
+  it("blesses only a postcode for the council lookup", () => {
+    const tool = allManifests().find((t) => t.name === "find_local_council_on_gov_uk");
+    expect(tool?.origin).toBe("https://www.gov.uk");
+    expect(tool?.fillsFrom).toEqual(["address.postcode"]);
+    expect(tool?.nativeName).toBeUndefined();
   });
 
   it("origin-qualifies Shopify tools and maps them to native names", () => {

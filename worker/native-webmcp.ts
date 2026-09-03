@@ -1,3 +1,7 @@
+import type { DiscoveredTool } from "../shared/protocol";
+
+export type { DiscoveredTool };
+
 /**
  * Call a tool already registered on the *remote* page (e.g. Shopify's
  * search_catalog). The façade never reimplements those handlers.
@@ -95,8 +99,72 @@ async function nativeCall(payload: {
   };
 }
 
+const NAME_RE = /^[A-Za-z0-9_.-]{1,128}$/;
+const EMPTY_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {},
+};
 
-export type DiscoveredTool = { name: string; description: string };
+function cleanText(v: unknown, max = 200): string {
+  return String(v ?? "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .slice(0, max);
+}
+
+function sanitizeSchema(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...EMPTY_SCHEMA };
+  try {
+    const json = JSON.stringify(raw);
+    if (json.length > 8000) return { ...EMPTY_SCHEMA };
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return { ...EMPTY_SCHEMA };
+  }
+}
+
+/** Strip control chars, drop illegal names, keep a JSON schema ChatGPT can call with. */
+export function sanitizeDiscoveredTools(raw: unknown): DiscoveredTool[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DiscoveredTool[] = [];
+  for (const item of raw.slice(0, 40)) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as { name?: unknown; description?: unknown; inputSchema?: unknown };
+    const name = cleanText(rec.name, 128).trim();
+    if (!NAME_RE.test(name)) continue;
+    out.push({
+      name,
+      description: cleanText(rec.description),
+      inputSchema: sanitizeSchema(rec.inputSchema),
+    });
+  }
+  return out;
+}
+
+export type CallRemoteArgs =
+  | {
+      ok: true;
+      name: string;
+      arguments: Record<string, unknown>;
+      origin: string | null;
+    }
+  | { ok: false; text: string };
+
+export function parseCallRemoteArgs(
+  args: Record<string, unknown>,
+): CallRemoteArgs {
+  const name = typeof args.name === "string" ? args.name : "";
+  if (!NAME_RE.test(name)) {
+    return { ok: false, text: "invalid native tool name" };
+  }
+  const raw = args.arguments;
+  const callArgs =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const origin = typeof args.origin === "string" ? args.origin : null;
+  return { ok: true, name, arguments: callArgs, origin };
+}
 export type DiscoveryOutcome = {
   ok: boolean;
   tools?: DiscoveredTool[];
@@ -121,7 +189,9 @@ export async function discoverNativeTools(
   discover: DiscoverFn,
 ): Promise<DiscoveryOutcome> {
   try {
-    return await discover(nativeList);
+    const out = await discover(nativeList);
+    if (!out.ok) return out;
+    return { ...out, tools: sanitizeDiscoveredTools(out.tools ?? []) };
   } catch (err) {
     return {
       ok: false,
@@ -133,7 +203,11 @@ export async function discoverNativeTools(
 
 /** Serialized into the remote page. Do not close over worker state. */
 async function nativeList(): Promise<DiscoveryOutcome> {
-  type Mc = { getTools: () => Promise<Array<{ name: string; description?: string }>> };
+  type Mc = {
+    getTools: () => Promise<
+      Array<{ name: string; description?: string; inputSchema?: unknown }>
+    >;
+  };
   const read = (): Mc | undefined =>
     (globalThis as { document?: { modelContext?: Mc } }).document?.modelContext;
 
@@ -143,7 +217,8 @@ async function nativeList(): Promise<DiscoveryOutcome> {
   // real answer, not a timing artefact.
   const deadline = Date.now() + 8000;
   let mc = read();
-  let raw: Array<{ name: string; description?: string }> = [];
+  let raw: Array<{ name: string; description?: string; inputSchema?: unknown }> =
+    [];
   for (;;) {
     mc = read();
     if (typeof mc?.getTools === "function") {
@@ -154,22 +229,19 @@ async function nativeList(): Promise<DiscoveryOutcome> {
     await new Promise((r) => setTimeout(r, 250));
   }
   if (typeof mc?.getTools !== "function") return { ok: false, reason: "no-webmcp" };
-  // A remote description is text we did not write, on its way into somebody
-  // else's model context. Cap it and strip control characters before it
-  // travels any further. This is the cheap half of the screening the registry
-  // spec calls for; it is not a substitute for it.
-  const clean = (v: unknown) =>
-    String(v ?? "")
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\u0000-\u001f\u007f]/g, " ")
-      .slice(0, 200);
+  // Do not call worker helpers from this function — Playwright serializes it
+  // into the remote page. Sanitise on the worker after evaluate returns.
   return {
     ok: true,
     polyfilled: !!(globalThis as { __mcpmaticPolyfilledWebMCP?: boolean })
       .__mcpmaticPolyfilledWebMCP,
-    tools: raw.slice(0, 40).map((t) => ({
-      name: clean(t.name),
-      description: clean(t.description),
+    tools: raw.map((t) => ({
+      name: String(t.name ?? ""),
+      description: String(t.description ?? ""),
+      inputSchema:
+        t.inputSchema && typeof t.inputSchema === "object"
+          ? (t.inputSchema as Record<string, unknown>)
+          : { type: "object", properties: {} },
     })),
   };
 }
