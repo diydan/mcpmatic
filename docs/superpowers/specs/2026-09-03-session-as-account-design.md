@@ -364,9 +364,17 @@ Same conventions as `tests/`:
 
 ## Phasing
 
-- **A — approval.** Fix the fake success, add suspend/resume, mark the listing.
-  Self-contained, touches `session-do.ts`, `protocol.ts`, `mcp/tools.ts` and
-  the console. Ships the trust claim on its own.
+- **A — approval.** Fix the fake success, add suspend/resume, mark the listing,
+  and split the console from the façade (§Routing — added after review and
+  belonging here, because without it the approval can be delivered to an
+  agent's browser). Touches `session-do.ts`, `protocol.ts`, `mcp/tools.ts`,
+  `bridge-role.ts`, the router and the console. Ships the trust claim on its
+  own.
+
+  One thing the routing work surfaced that the design did not predict:
+  `acceptBridge` closed every existing socket on connect, correct when there
+  was one view and wrong with two — opening the console would have
+  disconnected the agent. It replaces only a socket of the same role now.
 - **B — account.** `AccountDO`, passkey login, durable consent, audit rows
   relocated.
 
