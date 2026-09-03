@@ -799,6 +799,10 @@ export class SessionDO extends DurableObject<Env> {
         live.page.evaluate.bind(live.page),
         manifest.nativeName,
         callArgs,
+        // The tool's own schema, if we have observed this origin. Lets a call
+        // that cannot satisfy it be classified rather than thrown — the one
+        // fact a site owner can act on.
+        this.declaredSchemaFor(manifest.origin, manifest.nativeName),
       );
       // A manifest with a nativeName proxies the store's own tool. If that tool
       // is not there, say so — empty steps must not report a fake success. And
@@ -1087,6 +1091,12 @@ export class SessionDO extends DurableObject<Env> {
     return this.env.BROWSER ? "idle" : "missing";
   }
 
+  /** The observed schema for a remote tool, when the page we read is its own. */
+  private declaredSchemaFor(origin: string, nativeName: string): unknown {
+    if (this.remoteToolsOrigin !== origin) return undefined;
+    return this.remoteTools.find((t) => t.name === nativeName)?.inputSchema;
+  }
+
   private async refreshRemoteTools(live: LiveBrowser): Promise<void> {
     if (!live.page.evaluate) {
       this.remoteTools = [];
@@ -1155,6 +1165,9 @@ function nativeFailure(
   }
   if (outcome.reason === "no-webmcp") {
     return `${origin} exposes no document.modelContext on this page`;
+  }
+  if (outcome.reason === "schema-mismatch") {
+    return `${nativeName} on ${origin} declares a schema these arguments cannot satisfy: ${outcome.error ?? "unknown"}`;
   }
   return `${nativeName} is not registered on ${origin} right now`;
 }
