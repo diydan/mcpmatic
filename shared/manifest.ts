@@ -36,6 +36,7 @@ export const ALWAYS_ON_TOOLS = [
   "list_remote_tools",
   "call_remote_tool",
   "navigate_to",
+  "get_page_errors",
 ] as const;
 
 export function isWebMcpToolName(name: string): boolean {
