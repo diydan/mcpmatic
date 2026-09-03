@@ -4,12 +4,9 @@
 build departed from this text). This document is the design record; the header
 below was written before any of it existed.
 
-**Verified against `625a642`.** This repository moved four times while the spec
-was being written (`74025f8` → `86afdcb` → `625a642`), and the intermediate
-states differ in ways that change the claims below —
-`find_local_council_on_gov_uk` and `state.consented` are absent from
-`86afdcb` and present here. Every file
-reference was re-checked against `625a642`. Re-check before planning if `main`
+**Verified against `dd09dec`.** This repository moved repeatedly while the spec
+was being written and after it was built; every file reference below was
+re-checked against `dd09dec`. Re-check before planning if `main`
 has moved again.
 
 ## Problem
@@ -22,9 +19,9 @@ consequence, and one live bug.
 
 **The profile is in the browser.** `src/lib/profile-store.ts` reads and writes
 `localStorage`. `fillsFrom` is resolved client-side in
-`src/lib/register-all.ts:155` and merged into the tool arguments *before* they
+`src/lib/register-all.ts:154` and merged into the tool arguments *before* they
 cross the bridge WebSocket. The bless dialog is client-side too
-(`register-all.ts:146`). The Durable Object has never seen a profile value.
+(`register-all.ts:153`). The Durable Object has never seen a profile value.
 That is not an accident — it is what makes "there is nowhere to log it" an
 architecture rather than a policy.
 
@@ -32,17 +29,17 @@ architecture rather than a policy.
 `fill_checkout_on_allbirds_com` is steps-based with `fillsFrom` and no
 `nativeName` (`shared/stores.ts:150-176`). Over MCP:
 
-1. `buildToolList` lists it for any consented origin (`worker/mcp/tools.ts:52`).
+1. `buildToolList` lists it for any consented origin (`worker/mcp/tools.ts:62`).
    There is no profile check.
 2. A client calls it. There is no page, so no `localStorage` and no bless.
 3. `runStep` reads `args[step.from]` — `step.from` is the dotted profile path
    (`"shopper.firstName"`), which nothing supplied — so `String(undefined)`
    yields `""`, and `page.fill(selector, "")` sits inside a `catch {}`
-   (`worker/session-do.ts:701-707`).
+   (`worker/session-do.ts:893-899`).
 4. `runTool` returns `{ ok: true, text: "ran fill_checkout_on_allbirds_com
-   at <url>" }` having filled nothing (`worker/session-do.ts:678`).
+   at <url>" }` having filled nothing (`worker/session-do.ts:870`).
 
-`find_local_council_on_gov_uk` has the same shape (`shared/stores.ts:180-196`,
+`find_local_council_on_gov_uk` has the same shape (`shared/stores.ts:179-207`,
 `fillsFrom: ["address.postcode"]`). Those are the only two tools in the catalog
 that declare `fillsFrom`, and both fail this way.
 
@@ -51,13 +48,13 @@ effect — on the surface this design makes primary. Fixing it is not a
 precondition for the design; it is the first thing the design does.
 
 **And consent does not persist.** Granted origins live in the SessionDO `meta`
-table keyed by a 64-hex token with a two-hour TTL (`session-do.ts:45`,
-`:922`). A product whose claim is "holds your consent" cannot hold it for
+table keyed by a 64-hex token with a two-hour TTL (`session-do.ts:53`,
+`:1130`). A product whose claim is "holds your consent" cannot hold it for
 longer than one afternoon.
 
 Sprint item P1.3 (consent hydration) is partly addressed already — the `state`
 message now carries `consented` (`shared/protocol.ts:111`, sent by `sendState`
-at `session-do.ts:1173`; the connect-time state at `:515` omits it, and the
+at `session-do.ts:1180`; the connect-time state at `:515` omits it, and the
 page also hydrates from `GET /s/<token>/consent` on mount), so a reload
 re-seeds from the DO. That fixes the
 reload; it does not make consent outlive the session. The durability gap is
@@ -137,10 +134,10 @@ Empty — run the steps, the caller already supplied them. Non-empty — the
 approval path below.
 
 This is what stops the façade path prompting twice. `runTool` has two callers:
-`callTool` for MCP (`session-do.ts:250`) and `onToolExec` for the façade
-(`:439`). On the façade path `register-all.ts` has already run its client-side
-`BlessGate` (`:146`) and merged the resolved fields into the arguments
-(`:164`) before they cross the wire, so `missing` is empty and nothing prompts
+`callTool` for MCP (`session-do.ts:363`) and `onToolExec` for the façade
+(`:595`). On the façade path `register-all.ts` has already run its client-side
+`BlessGate` (`:154`) and merged the resolved fields into the arguments
+(`:172`) before they cross the wire, so `missing` is empty and nothing prompts
 again. One rule, no entry-point branching inside `runTool`.
 
 **One guard at the MCP entry.** `callTool` strips any argument key matching a
@@ -211,7 +208,7 @@ Protocol additions, `shared/protocol.ts`, additive and still `v: 1`:
 
 `fills` keys are the dotted paths (`"address.postcode"`), which is what
 `resolveFields` returns and what `step.from` already reads — so the merge is
-the same merge `register-all.ts:164` performs today, moved to the other end of
+the same merge `register-all.ts:172` performs today, moved to the other end of
 the wire.
 
 **This inherits P0.1's rule: complete on every exit path.** Deny, timeout,
@@ -290,7 +287,7 @@ first record made to serve both.
 - latency
 
 **The failure classes are the product — and they are not free yet.**
-`nativeFailure()` (`worker/session-do.ts:991`) distinguishes exactly three:
+`nativeFailure()` (`worker/session-do.ts:1205`) distinguishes exactly three:
 `threw`, `no-webmcp`, and not-registered. It does **not** distinguish a schema
 mismatch; a native call rejected for a bad argument shape arrives as `threw`,
 indistinguishable from any other exception.
@@ -321,8 +318,8 @@ This requires audit rows to outlive the session, which is why they move to the
 `AccountDO` in §The account. The move is a relocation, not a reshape.
 
 **One correction the telemetry forces.** Both entry points record
-`manifest.fillsFrom` unconditionally — `callTool` at `session-do.ts:258`,
-`onToolExec` at `:461` — so a call that resolved no fields still logs the
+`manifest.fillsFrom` unconditionally — `callTool` at `session-do.ts:371`,
+`onToolExec` at `:615` — so a call that resolved no fields still logs the
 declared names. A native-tool call on a manifest that declares `fillsFrom`
 produces a row naming fields that never moved. Aggregated, that overcounts
 profile usage. The row should record the fields **actually resolved** (the keys
