@@ -8,12 +8,12 @@ describe("MCP callTool contract helpers", () => {
     expect(m?.origin).toBe("https://www.kayak.com");
   });
 
-  it("originOfTool returns the manifest origin", () => {
-    expect(originOfTool("search_flights_on_kayak_com")).toBe("https://www.kayak.com");
+  it("originOfTool returns the manifest origin", async () => {
+    expect(await originOfTool("search_flights_on_kayak_com")).toBe("https://www.kayak.com");
   });
 
-  it("originOfTool returns null for spine tools", () => {
-    expect(originOfTool("get_page_state")).toBeNull();
-    expect(originOfTool("navigate_to")).toBeNull();
+  it("originOfTool returns null for spine tools", async () => {
+    expect(await originOfTool("get_page_state")).toBeNull();
+    expect(await originOfTool("navigate_to")).toBeNull();
   });
 });

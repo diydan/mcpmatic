@@ -221,7 +221,7 @@ export class SessionDO extends DurableObject<Env> {
    */
   async listTools(): Promise<ToolSchema[]> {
     const consented = new Set(this.readConsent());
-    return buildToolList(consented) as unknown as ToolSchema[];
+    return (await buildToolList(consented, this.env.MANIFEST_REGISTRY)) as unknown as ToolSchema[];
   }
 
   /**
@@ -243,9 +243,9 @@ export class SessionDO extends DurableObject<Env> {
         text: err instanceof Error ? err.message : "tool failed",
       };
     }
-    const fieldNames = manifestFor(name)?.fillsFrom ?? [];
+    const fieldNames = (await manifestFor(name, this.env.MANIFEST_REGISTRY))?.fillsFrom ?? [];
     const auditOrigin =
-      originOfTool(name) ?? this.currentOrigin() ?? "";
+      (await originOfTool(name, this.env.MANIFEST_REGISTRY)) ?? this.currentOrigin() ?? "";
     this.recordAudit(auditOrigin, name, fieldNames);
     return result;
   }
@@ -440,8 +440,12 @@ export class SessionDO extends DurableObject<Env> {
       ok: result.ok,
       result: result.text,
     });
-    const fieldNames = manifestFor(name)?.fillsFrom ?? [];
-    this.recordAudit(originOfTool(name) ?? this.currentOrigin() ?? "", name, fieldNames);
+    const fieldNames = (await manifestFor(name, this.env.MANIFEST_REGISTRY))?.fillsFrom ?? [];
+    this.recordAudit(
+      (await originOfTool(name, this.env.MANIFEST_REGISTRY)) ?? this.currentOrigin() ?? "",
+      name,
+      fieldNames,
+    );
   }
 
   /**
@@ -567,7 +571,7 @@ export class SessionDO extends DurableObject<Env> {
       return { ok: true, text: `navigated to ${live.page.url()}` };
     }
 
-    const manifest = manifestFor(name);
+    const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
     if (!manifest) return { ok: false, text: `unknown tool ${name}` };
     if (!this.consented(manifest.origin)) {
       return { ok: false, text: "origin not consented" };
