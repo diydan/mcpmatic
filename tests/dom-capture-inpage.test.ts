@@ -91,3 +91,33 @@ describe("captureInPage duplicate ids", () => {
     expect(captured[0].selector).toContain('[id="only"]');
   });
 });
+
+/**
+ * Playwright does not call captureInPage — it stringifies it and evaluates
+ * the source in the remote page, where nothing outside the function body
+ * exists. Calling it directly (as every test above does) resolves module
+ * scope happily, so a hoisted constant passes the whole suite and throws a
+ * ReferenceError on the first real page. This runs the function the way
+ * Playwright will.
+ */
+describe("captureInPage under serialization", () => {
+  const serialized = () => {
+    const source = captureInPage.toString();
+    return new Function(`return (${source})`)() as typeof captureInPage;
+  };
+
+  it("runs with no reference to anything outside its own body", async () => {
+    setBody('<div><label for="q">Search</label><input id="q" /><button>Go</button></div>');
+    const captured = await serialized()();
+    expect(captured.map((c) => c.name)).toEqual(["Search", "Go"]);
+  });
+
+  it("keeps its selectors correct when serialized", async () => {
+    setBody("<div><p>x</p><button>One</button><button>Two</button></div>");
+    const captured = await serialized()();
+    for (const el of captured) {
+      expect(document.querySelectorAll(el.selector)).toHaveLength(1);
+    }
+    expect(document.querySelector(captured[1].selector)?.textContent).toBe("Two");
+  });
+});

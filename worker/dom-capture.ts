@@ -46,6 +46,7 @@ type CapturedEl = {
   parentElement: CapturedEl | null;
   children: ArrayLike<CapturedEl>;
   getAttribute: (name: string) => string | null;
+  querySelectorAll: (selector: string) => ArrayLike<CapturedEl>;
 };
 
 type CapturedDoc = {
@@ -57,6 +58,12 @@ type CapturedDoc = {
 export async function captureInPage(): Promise<Array<{ role: string; name: string; selector: string }>> {
   const doc = (globalThis as { document?: CapturedDoc }).document;
   if (!doc) return [];
+
+  // Declared inside the function, not at module scope: this body is
+  // stringified and evaluated in the remote page, so a reference to anything
+  // outside it is a ReferenceError there — while still resolving fine when a
+  // test calls the function directly in Node.
+  const INTERACTIVE = "button, a, input, select, textarea, [role], form";
 
   /**
    * Escape for use inside a double-quoted attribute selector. Not CSS.escape:
@@ -134,15 +141,31 @@ export async function captureInPage(): Promise<Array<{ role: string; name: strin
       const labelText = label?.textContent;
       if (labelText) return labelText.trim().slice(0, 100);
     }
-    const text = el.textContent?.trim();
-    if (text) return text.slice(0, 100);
+    // textContent is the whole subtree, so for a container of other captured
+    // elements — a form, a div[role] wrapping a panel — it concatenates every
+    // descendant's text into one blob. That is not a name: it burns prompt on
+    // noise and buries the fields the model is supposed to distinguish. A
+    // <button><span>Go</span></button> has no interactive descendants and
+    // still names itself from its text.
+    let containsInteractive = false;
+    try {
+      containsInteractive = el.querySelectorAll(INTERACTIVE).length > 0;
+    } catch {
+      containsInteractive = false;
+    }
+    if (!containsInteractive) {
+      const text = el.textContent?.trim();
+      if (text) return text.slice(0, 100);
+    }
     const placeholder = el.getAttribute("placeholder");
     if (placeholder) return placeholder.trim();
     const value = el.value;
-    return value ? String(value).trim() : "";
+    if (value) return String(value).trim();
+    const named = el.getAttribute("name");
+    return named ? named.trim() : "";
   }
 
-  const found = doc.querySelectorAll("button, a, input, select, textarea, [role], form");
+  const found = doc.querySelectorAll(INTERACTIVE);
   return Array.from(found)
     .slice(0, 150)
     .map((el) => ({ role: roleFor(el), name: nameFor(el), selector: selectorFor(el) }));
