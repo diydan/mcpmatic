@@ -57,7 +57,7 @@ longer than one afternoon.
 
 Sprint item P1.3 (consent hydration) is partly addressed already — the `state`
 message now carries `consented` (`shared/protocol.ts:111`, sent by `sendState`
-at `session-do.ts:966`; the connect-time state at `:358` omits it, and the
+at `session-do.ts:1173`; the connect-time state at `:515` omits it, and the
 page also hydrates from `GET /s/<token>/consent` on mount), so a reload
 re-seeds from the DO. That fixes the
 reload; it does not make consent outlive the session. The durability gap is
