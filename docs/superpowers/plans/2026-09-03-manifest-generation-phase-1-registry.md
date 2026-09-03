@@ -36,7 +36,7 @@ Modified files:
 |---|---|
 | `worker/manifests.ts` | `manifestFor`/`originOfTool` become `async`, take optional `kv: KvLike` |
 | `worker/mcp/tools.ts` | `buildToolList` becomes `async`, takes optional `kv: KvLike` |
-| `worker/session-do.ts` | 5 call sites `await` the now-async functions; `listTools()` awaits `buildToolList` and passes `this.env.MANIFEST_REGISTRY` |
+| `worker/session-do.ts` | 6 call sites `await` the now-async functions (verified via grep during the final review — this table originally undercounted by one); `listTools()` awaits `buildToolList` and passes `this.env.MANIFEST_REGISTRY` |
 | `wrangler.jsonc` | Add `MANIFEST_REGISTRY` KV binding |
 | `worker-configuration.d.ts` | Add `MANIFEST_REGISTRY?: KVNamespace` to `Cloudflare.Env` |
 | `tests/mcp-do-call.test.ts` | `await originOfTool(...)` |
@@ -226,7 +226,7 @@ export { originKey as manifestRegistryOriginKey, toolKey as manifestRegistryTool
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm vitest run tests/manifest-registry.test.ts`
-Expected: PASS (9 tests)
+Expected: PASS (8 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -408,7 +408,7 @@ export async function originOfTool(name: string, kv?: KvLike): Promise<string | 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm vitest run tests/manifests.test.ts`
-Expected: PASS (8 tests)
+Expected: PASS (7 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -702,3 +702,20 @@ git commit -m "feat(registry): await registry-aware manifest resolution in Sessi
 - **Spec coverage:** this plan implements only the Storage section's read path from the design spec. Generation, the write path, the trigger flow, and the review/bless UI are Phase 2 — see the spec's Storage/Trigger flow/Review & bless sections, all still open.
 - **Left deliberately unchanged in this phase:** `worker/session-do.ts:498` (`known: MANIFESTS.map(...)` inside `list_available_origins`) and `:885` (`setAutonomous`'s catalog) — both static-only. The registry is empty in this phase, so this is behavior-neutral; whether the "known origins" catalog should grow to include registry-backed origins is a Phase 2 question, not resolved here.
 - **`manifestByName`** (`worker/mcp/tools.ts`) is untouched — it's a test-only helper over the static list, never called from runtime code.
+
+## Outcome
+
+Shipped via subagent-driven-development: 5 tasks, each individually reviewed clean (zero Critical/Important findings across all five), then a final whole-branch review on the most capable model. That review verified the core claims directly rather than trusting reports — ran `wrangler kv namespace list` to confirm the KV namespace was real, grepped every `.put(` call to confirm the registry is genuinely never written to in this phase, grepped every consumer of `manifestFor`/`originOfTool`/`buildToolList` to confirm none were left un-awaited — and found 4 real Important issues invisible to any single task's review because they only exist in the composition:
+
+1. `manifestFor` had no spine-tool short-circuit (only `originOfTool` did), so every `get_page_state` call — the most-invoked tool in the system — fell through to a guaranteed-miss KV read once the binding existed.
+2. `callTool`/`onToolExec` each called both `manifestFor` and `originOfTool` for the same name, doubling the waste.
+3. `buildToolList` had no dedup between the static and registry loops, and no check that a registry manifest's own `.origin` matched the key it was read from.
+4. `getBlessedManifestByName` did zero shape validation, unlike its sibling `getRegistryEntry`.
+
+All four fixed in one fix wave, verified by a scoped re-review (all 6 findings — the 4 above plus 2 Minors — confirmed ADDRESSED, no new breakage), merged to `main` locally as `db3476d`. Full details: git log on `main` from `15fa08d..db3476d`.
+
+**One process note worth keeping:** the fix wave's own dispatch cited `shared/manifest.ts`'s `ALWAYS_ON_TOOLS` from a stale recollection (a different, uncommitted local checkout, not this worktree) — it had 3 entries in this worktree, not the 5 the fix assumed. The implementer caught it, correctly declined to guess, and reported `DONE_WITH_CONCERNS` rather than silently shipping a partial fix. Resolved by the controller directly (verified `ALWAYS_ON_TOOLS` had zero other consumers, widened it, added a covering test) rather than another subagent round for a 2-line change.
+
+**Not carried into Phase 1 — explicitly for Phase 2:** the façade side (`src/pages/Session.tsx`, `src/lib/register-all.ts`) still reads only the static `allManifests()` list. `worker/mcp/tools.ts`'s own doc comment asserts the façade and the MCP surface expose the same tool names — Phase 2 will break that invariant the moment a generated tool is blessed, unless the façade is widened too. See the Phase 2 plan's Open Questions.
+
+**Phase 2 plan:** `docs/superpowers/plans/2026-09-03-manifest-generation-phase-2-generation-and-bless.md`

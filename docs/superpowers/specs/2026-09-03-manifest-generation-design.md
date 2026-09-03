@@ -143,25 +143,47 @@ read-heavy (checked on every `list_remote_tools`/`call_remote_tool`) and
 write-rare (once on generation, once on bless), which is KV's shape, not
 a DO's.
 
-Key: origin (same string `consented(origin)` already checks). Value:
+**Revised from the first draft**, which put `status` at the entry level
+(`{ status: "draft" | "blessed", manifest: ToolManifest[], ... }`) — that
+directly contradicted this spec's own Review & bless section below ("Bless
+is per-tool, not all-or-nothing for the origin"). Status belongs on each
+tool, not on the origin as a whole. Implemented (Phase 1) as two key
+shapes over the same data:
 
 ```ts
-type RegistryEntry = {
-  status: "draft" | "blessed";
-  manifest: ToolManifest[];
+type GeneratedToolStatus = "draft" | "blessed" | "declined";
+
+type GeneratedTool = {
+  manifest: ToolManifest;
+  status: GeneratedToolStatus;
   generatedAt: number;
   blessedAt?: number;
 };
+
+type RegistryEntry = {
+  tools: GeneratedTool[];
+};
 ```
 
-`worker/manifests.ts` (`manifestFor`, `originOfTool`) currently reads only
-the static `MANIFESTS` array built from `shared/stores.ts` at bundle time.
-It becomes origin-aware of the KV registry as a second source, **blessed
-entries only** — a `"draft"` entry is invisible to `manifestFor`/
-`originOfTool`, and therefore to `list_remote_tools`/`call_remote_tool`,
-exactly as an unconsented origin is invisible today. Both call sites in
-`session-do.ts` move from sync reads to async (`await
-env.MANIFEST_REGISTRY.get(...)`).
+`origin:<origin>` holds the full `RegistryEntry` for that origin — every
+tool ever generated for it, any status, the source of truth a listing
+reads. `tool:<name>` holds a blessed tool's `ToolManifest` directly,
+written alongside the per-origin entry when a tool is blessed — the O(1)
+path `manifestFor` needs, since it only has a tool name, not an origin, to
+look up by. The two keys must be written and deleted together; KV has no
+cross-key transactions, so a write that updates one and not the other
+produces either a tool that's listed but not callable, or callable but not
+listed. Phase 2's bless/decline write path owns keeping them in sync.
+
+`worker/manifests.ts` (`manifestFor`, `originOfTool`) and
+`worker/mcp/tools.ts` (`buildToolList`) currently read only the static
+`MANIFESTS` array built from `shared/stores.ts` at bundle time. Phase 1
+made all three registry-aware as a second source, **blessed entries
+only** — a `"draft"` or `"declined"` entry is invisible to them, and
+therefore to `list_remote_tools`/`call_remote_tool`/MCP `tools/list`,
+exactly as an unconsented origin is invisible today. Every call site that
+resolves a tool by name or builds a tool list moved from sync to async,
+threading the KV binding through.
 
 ## Review & bless
 
