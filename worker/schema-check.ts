@@ -17,39 +17,89 @@ export type SchemaCheck =
   | { ok: true }
   | { ok: false; missing: string[]; wrongType: string[]; unexpected: string[] };
 
-type JsonSchema = {
+type PropertySchema = {
   type?: unknown;
-  properties?: Record<string, { type?: unknown }>;
+  properties?: Record<string, PropertySchema>;
   required?: unknown;
   additionalProperties?: unknown;
+  items?: unknown;
 };
 
-export function checkArgs(schema: unknown, args: Record<string, unknown>): SchemaCheck {
-  const s = asObjectSchema(schema);
-  if (!s) return { ok: true };
+type JsonSchema = PropertySchema;
 
+export function checkArgs(schema: unknown, args: Record<string, unknown>): SchemaCheck {
+  const found: Mismatch = { missing: [], wrongType: [], unexpected: [] };
+  walk(schema, args, "", found, 0);
+  if (!found.missing.length && !found.wrongType.length && !found.unexpected.length) {
+    return { ok: true };
+  }
+  return { ok: false, ...found };
+}
+
+type Mismatch = { missing: string[]; wrongType: string[]; unexpected: string[] };
+
+/**
+ * Real schemas nest. Shopify's `update_cart` declares `required: ["cart"]` at
+ * the top and the field that matters, `line_items`, one level down; a checker
+ * that reads only the top level passes `{cart:{}}` straight through, and that
+ * is precisely the call a merchant needs to hear about. Paths are reported
+ * dotted (`cart.line_items`) so they name the field rather than the wrapper.
+ *
+ * Depth-bounded: a schema is remote input, and a pathological or cyclic one
+ * must not become a way to spend this Worker's CPU.
+ */
+const MAX_DEPTH = 6;
+
+function walk(
+  schema: unknown,
+  value: unknown,
+  path: string,
+  found: Mismatch,
+  depth: number,
+): void {
+  if (depth > MAX_DEPTH) return;
+  const s = asObjectSchema(schema);
+  if (!s) return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+
+  const args = value as Record<string, unknown>;
   const properties = s.properties ?? {};
   const required = Array.isArray(s.required)
     ? s.required.filter((x): x is string => typeof x === "string")
     : [];
 
-  const missing = required.filter((name) => args[name] === undefined);
-  const wrongType: string[] = [];
-  const unexpected: string[] = [];
-
-  for (const [name, value] of Object.entries(args)) {
-    const declared = properties[name];
-    if (!declared) {
-      if (s.additionalProperties === false) unexpected.push(name);
-      continue;
-    }
-    if (!matchesType(declared.type, value)) wrongType.push(name);
+  for (const name of required) {
+    if (args[name] === undefined) found.missing.push(join(path, name));
   }
 
-  if (!missing.length && !wrongType.length && !unexpected.length) return { ok: true };
-  return { ok: false, missing, wrongType, unexpected };
+  for (const [name, arg] of Object.entries(args)) {
+    const declared = properties[name];
+    if (!declared) {
+      if (s.additionalProperties === false) found.unexpected.push(join(path, name));
+      continue;
+    }
+    if (!matchesType(declared.type, arg)) {
+      found.wrongType.push(join(path, name));
+      // Type is already wrong; descending would report the same fault twice.
+      continue;
+    }
+    if (declared.type === "object") {
+      walk(declared, arg, join(path, name), found, depth + 1);
+      continue;
+    }
+    if (declared.type === "array" && Array.isArray(arg) && declared.items) {
+      // Every element answers to the same schema; report by index so a
+      // merchant can see which item in the batch was malformed.
+      arg.forEach((element, i) =>
+        walk(declared.items, element, `${join(path, name)}[${i}]`, found, depth + 1),
+      );
+    }
+  }
 }
 
+function join(path: string, name: string): string {
+  return path ? `${path}.${name}` : name;
+}
 function asObjectSchema(schema: unknown): JsonSchema | null {
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) return null;
   const s = schema as JsonSchema;

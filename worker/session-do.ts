@@ -700,7 +700,13 @@ export class SessionDO extends DurableObject<Env> {
       // get_page_state.
       const live = this.live;
       if (!live) {
-        return { ok: true, text: "No remote page open yet. Grant an origin first." };
+        // "Grant an origin first" was wrong and cost real debugging time: the
+        // origin can be granted and this still fires, because consent does not
+        // open a page. Name the thing that actually unblocks it.
+        return {
+          ok: true,
+          text: "No remote page open yet. Call navigate_to with a granted origin first.",
+        };
       }
       if (!live.page.evaluate) {
         return { ok: false, text: "cannot inspect the remote page" };

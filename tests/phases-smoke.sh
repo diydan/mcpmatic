@@ -59,15 +59,24 @@ echo "$FILL" | grep -qi '"ran fill_checkout' \
   && fail "STILL REPORTING FAKE SUCCESS" || pass "no fake success"
 
 echo "== 5. the schemas the telemetry classifier depends on =="
-# This is the one that cannot be proven offline: does Allbirds actually hand
-# back inputSchema objects with required[] we can check arguments against?
-REMOTE=$(mcp tools/call "{\"name\":\"list_remote_tools\",\"arguments\":{\"url\":\"$ORIGIN\"}}")
+# This is the one that cannot be proven offline: does the storefront actually
+# hand back inputSchema objects with required[] we can check arguments against?
+#
+# navigate_to first. list_remote_tools reports on the page that is *open* and
+# never starts a browser, and granting consent does not open one.
+mcp tools/call "{\"name\":\"navigate_to\",\"arguments\":{\"origin\":\"$ORIGIN\"}}" >/dev/null
+REMOTE=$(mcp tools/call '{"name":"list_remote_tools","arguments":{}}')
 echo "$REMOTE" | grep -q 'WebMCP tool' \
   && pass "storefront exposed its own tools" \
   || fail "no remote tools seen: $(echo "$REMOTE" | head -c 300)"
 echo "$REMOTE" | grep -q '"required"' \
   && pass "schemas carry required[] — checkArgs can classify" \
   || fail "no required[] in observed schemas: checkArgs will never fire"
+# Shopify nests: required:["cart"] at the top, line_items one level down. A
+# flat checker passes {cart:{}} and misses the case worth reporting.
+echo "$REMOTE" | grep -q '"properties":{"cart":{"type":"object","required"' \
+  && pass "nested required[] present — the case checkArgs must recurse for" \
+  || echo "  (no nested required seen; schemas may have changed shape)"
 
 echo "== 6. audit is readable and has no value column (Phase B) =="
 AUDIT=$(curl -sS "$BASE_URL/s/$SESSION/audit")
