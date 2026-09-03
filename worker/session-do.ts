@@ -966,11 +966,29 @@ export class SessionDO extends DurableObject<Env> {
   private async maybeAutoGenerate(origin: string): Promise<void> {
     const kv = this.env.MANIFEST_REGISTRY;
     if (!kv) return;
-    if (!(await this.allowOrigin(origin))) return;
-    if (this.generatingOrigins.has(origin)) return;
-    const existing = await getRegistryEntry(kv, origin);
-    if (existing) return;
-    void this.runGeneration(origin, kv);
+    if (!this.claimGeneration(origin)) return;
+    let handedOff = false;
+    try {
+      if (!(await this.allowOrigin(origin))) return;
+      if (await getRegistryEntry(kv, origin)) return;
+      handedOff = true;
+      void this.runGeneration(origin, kv);
+    } finally {
+      // runGeneration releases the claim itself once it has it.
+      if (!handedOff) this.generatingOrigins.delete(origin);
+    }
+  }
+
+  /**
+   * Take the generation claim for an origin, or report that someone else
+   * holds it. Synchronous on purpose: a `has` check with an `await` between
+   * it and the claim lets two near-simultaneous misses — or a miss and a
+   * "Map this site" click — both pass and start duplicate generations.
+   */
+  private claimGeneration(origin: string): boolean {
+    if (this.generatingOrigins.has(origin)) return false;
+    this.generatingOrigins.add(origin);
+    return true;
   }
 
   /** Manual entry point — the hosted UI's "Map this site" button. */
@@ -980,12 +998,18 @@ export class SessionDO extends DurableObject<Env> {
       this.send(ws, { v: 1, type: "error", message: "no manifest registry configured" });
       return;
     }
-    if (!(await this.allowOrigin(origin))) {
-      this.send(ws, { v: 1, type: "error", message: "origin not consented" });
-      return;
+    if (!this.claimGeneration(origin)) return;
+    let handedOff = false;
+    try {
+      if (!(await this.allowOrigin(origin))) {
+        this.send(ws, { v: 1, type: "error", message: "origin not consented" });
+        return;
+      }
+      handedOff = true;
+      void this.runGeneration(origin, kv);
+    } finally {
+      if (!handedOff) this.generatingOrigins.delete(origin);
     }
-    if (this.generatingOrigins.has(origin)) return;
-    void this.runGeneration(origin, kv);
   }
 
   /**
@@ -994,7 +1018,8 @@ export class SessionDO extends DurableObject<Env> {
    * ChatGPT request/response cycle (README: "no LLM in the hot path").
    */
   private async runGeneration(origin: string, kv: KVNamespace): Promise<void> {
-    this.generatingOrigins.add(origin);
+    // The claim is already held by the caller (claimGeneration); this owns
+    // only releasing it.
     try {
       const live = this.live;
       if (!live?.page.evaluate) {

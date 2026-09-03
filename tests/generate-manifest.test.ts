@@ -84,3 +84,41 @@ describe("generateManifest", () => {
     expect(outcome.reason).toBe("threw");
   });
 });
+
+describe("generateManifest step/schema agreement", () => {
+  it("drops a tool whose fill step draws from a key the schema does not declare", async () => {
+    const mismatched = {
+      ...VALID_TOOL,
+      name: "mismatched",
+      inputSchema: { type: "object", properties: { other: { type: "string" } } },
+    };
+    const run = vi.fn(async () => completionWith(JSON.stringify([mismatched])));
+    const outcome = await generateManifest({ AI: { run } }, "https://example.com", ELEMENTS);
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("drops a fill tool whose schema declares no properties at all", async () => {
+    const noProps = {
+      ...VALID_TOOL,
+      name: "no_props",
+      inputSchema: { type: "object", properties: {} },
+    };
+    const run = vi.fn(async () => completionWith(JSON.stringify([noProps])));
+    const outcome = await generateManifest({ AI: { run } }, "https://example.com", ELEMENTS);
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("keeps a tool with no fill/type steps regardless of its schema", async () => {
+    const clickOnly = {
+      name: "open_page",
+      description: "open the page",
+      inputSchema: { type: "object", properties: {} },
+      steps: [{ action: "click", selector: "button.go" }],
+    };
+    const run = vi.fn(async () => completionWith(JSON.stringify([clickOnly])));
+    const outcome = await generateManifest({ AI: { run } }, "https://example.com", ELEMENTS);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) throw new Error("expected ok");
+    expect(outcome.manifests[0].name).toBe("open_page_on_example_com");
+  });
+});

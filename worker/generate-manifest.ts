@@ -52,6 +52,15 @@ function validateStep(raw: unknown): ManifestStep | null {
   return null;
 }
 
+/** The declared property names of a sanitized inputSchema, for step checking. */
+function schemaKeys(schema: Record<string, unknown>): Set<string> {
+  const properties = schema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+    return new Set();
+  }
+  return new Set(Object.keys(properties as Record<string, unknown>));
+}
+
 /**
  * One tool, fully validated before it can reach storage. A single bad step
  * drops the whole tool rather than a partial one: a manifest is replayed as
@@ -75,11 +84,23 @@ function validateManifest(raw: unknown, origin: string): ToolManifest | null {
   const base = m.name.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 80);
   const qualifiedName = `${base}_on_${originSlug(origin)}`.slice(0, 128);
   if (!NAME_RE.test(qualifiedName)) return null;
+  const inputSchema = sanitizeSchema(m.inputSchema);
+  // Every fill/type step must draw from a property the tool actually
+  // declares. runStep resolves `from` as `args[step.from] ?? ""`, so a step
+  // naming a key the schema omits fills the empty string forever: the review
+  // screen reads "fills input#q from q" and the human blesses a tool that
+  // silently does nothing. The prompt asks for this; the worker enforces it.
+  const declared = schemaKeys(inputSchema);
+  for (const step of steps) {
+    if ((step.action === "fill" || step.action === "type") && !declared.has(step.from)) {
+      return null;
+    }
+  }
   return {
     name: qualifiedName,
     description: m.description.slice(0, 500),
     origin,
-    inputSchema: sanitizeSchema(m.inputSchema) as ToolManifest["inputSchema"],
+    inputSchema: inputSchema as ToolManifest["inputSchema"],
     steps,
   };
 }

@@ -54,16 +54,25 @@ type CapturedDoc = {
   querySelectorAll: (selector: string) => ArrayLike<CapturedEl>;
 };
 
-async function captureInPage(): Promise<Array<{ role: string; name: string; selector: string }>> {
+export async function captureInPage(): Promise<Array<{ role: string; name: string; selector: string }>> {
   const doc = (globalThis as { document?: CapturedDoc }).document;
   if (!doc) return [];
+
+  /**
+   * Escape for use inside a double-quoted attribute selector. Not CSS.escape:
+   * the worker tsconfig has no type for it, and an `#id` selector cannot carry
+   * an id containing a space, dot, colon, or leading digit at all.
+   */
+  function escapeAttr(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
 
   function selectorFor(el: CapturedEl): string {
     const parts: string[] = [];
     let node: CapturedEl | null = el;
     while (node && node !== doc!.body) {
       if (node.id) {
-        parts.unshift(`#${node.id}`);
+        parts.unshift(`[id="${escapeAttr(node.id)}"]`);
         break;
       }
       const parent: CapturedEl | null = node.parentElement;
@@ -71,7 +80,10 @@ async function captureInPage(): Promise<Array<{ role: string; name: string; sele
       const current: CapturedEl = node;
       const siblings = Array.from(parent.children).filter((c) => c.tagName === current.tagName);
       const index = siblings.indexOf(current) + 1;
-      parts.unshift(`${current.tagName.toLowerCase()}:nth-child(${index})`);
+      // nth-of-type, not nth-child: the index above counts same-tag siblings,
+      // and nth-child counts every child, so the two disagree whenever an
+      // element has siblings of another tag.
+      parts.unshift(`${current.tagName.toLowerCase()}:nth-of-type(${index})`);
       node = parent;
     }
     return parts.length > 0 ? parts.join(" > ") : el.tagName.toLowerCase();
@@ -97,10 +109,7 @@ async function captureInPage(): Promise<Array<{ role: string; name: string; sele
     const aria = el.getAttribute("aria-label");
     if (aria) return aria.trim();
     if (el.id) {
-      // Quote-escaped attribute selector rather than CSS.escape, which the
-      // worker tsconfig has no type for and older engines may not ship.
-      const escaped = el.id.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      const label = doc!.querySelector(`label[for="${escaped}"]`);
+      const label = doc!.querySelector(`label[for="${escapeAttr(el.id)}"]`);
       const labelText = label?.textContent;
       if (labelText) return labelText.trim().slice(0, 100);
     }
