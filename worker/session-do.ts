@@ -41,8 +41,18 @@ import {
 } from "./native-webmcp";
 import type { DiscoveredTool } from "../shared/protocol";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
+import {
+  ApprovalGate,
+  prepareFills,
+  stripProfilePaths,
+} from "./approval";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+/**
+ * Under the MCP SDK's DEFAULT_REQUEST_TIMEOUT_MSEC (60_000), so a stalled
+ * approval surfaces as our error rather than the client's own abandonment.
+ */
+const APPROVAL_TIMEOUT_MS = 45_000;
 /** Grace after the last client disconnects before the browser is released. */
 const IDLE_GRACE_MS = 3 * 60 * 1000;
 const VIEWPORT = { width: 1280, height: 720 };
@@ -80,6 +90,11 @@ export class SessionDO extends DurableObject<Env> {
   private launching: Promise<LiveBrowser | null> | null = null;
   private pending: PendingTurn | null = null;
   private driving = false;
+  private readonly approvals = new ApprovalGate({
+    hasConsole: () => this.ctx.getWebSockets().length > 0,
+    send: (req) => this.broadcast({ v: 1, type: "approval_request", ...req }),
+    timeoutMs: APPROVAL_TIMEOUT_MS,
+  });
   private remoteTools: DiscoveredTool[] = [];
   private remoteToolsOrigin: string | null = null;
 
@@ -245,20 +260,25 @@ export class SessionDO extends DurableObject<Env> {
     name: string,
     args: Record<string, unknown>,
   ): Promise<{ ok: boolean; text: string }> {
-    let result: { ok: boolean; text: string };
+    const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
+    // The MCP entry, and only this one, strips caller-supplied profile paths.
+    // Otherwise a client could pass {"address.line1": "…"} and route around
+    // the approval — and the audit row would name a field that was never the
+    // user's profile. The façade path merges *after* its own bless, so it is
+    // deliberately left alone.
+    const safeArgs = stripProfilePaths(manifest?.fillsFrom, args);
+    let result: { ok: boolean; text: string; resolved?: string[] };
     try {
-      result = await this.runTool(name, args);
+      result = await this.runTool(name, safeArgs);
     } catch (err) {
       result = {
         ok: false,
         text: err instanceof Error ? err.message : "tool failed",
       };
     }
-    const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
-    const fieldNames = manifest?.fillsFrom ?? [];
     const auditOrigin = manifest?.origin ?? this.currentOrigin() ?? "";
-    this.recordAudit(auditOrigin, name, fieldNames);
-    return result;
+    this.recordAudit(auditOrigin, name, result.resolved ?? []);
+    return { ok: result.ok, text: result.text };
   }
 
   async destroy(): Promise<void> {
@@ -308,6 +328,9 @@ export class SessionDO extends DurableObject<Env> {
       case "tool_exec":
         await this.onToolExec(msg.id, msg.name, msg.arguments);
         return;
+      case "approval_result":
+        this.approvals.settle(msg.id, msg.ok, msg.fills);
+        return;
       case "tool_result":
         await this.onToolResult(msg.callId, msg.ok, msg.result);
         return;
@@ -328,6 +351,9 @@ export class SessionDO extends DurableObject<Env> {
     }
     const remaining = this.ctx.getWebSockets().filter((s) => s !== ws);
     if (remaining.length > 0) return;
+    // Nobody left to answer. Settle now rather than making each suspended call
+    // sit out its 45 seconds.
+    this.approvals.abandonAll();
     // Grace, not immediate teardown: a refresh must not cost the user the
     // login they just completed inside the viewport.
     const at = this.createdAt();
@@ -434,7 +460,7 @@ export class SessionDO extends DurableObject<Env> {
   ): Promise<void> {
     this.driving = true;
     this.sendState();
-    let result: { ok: boolean; text: string };
+    let result: { ok: boolean; text: string; resolved?: string[] };
     try {
       result = await this.runTool(name, args);
     } catch (err) {
@@ -455,10 +481,11 @@ export class SessionDO extends DurableObject<Env> {
       result: result.text,
     });
     const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
+    // What moved, not what was declared. See runTool's `resolved`.
     this.recordAudit(
       manifest?.origin ?? this.currentOrigin() ?? "",
       name,
-      manifest?.fillsFrom ?? [],
+      result.resolved ?? [],
     );
   }
 
@@ -490,10 +517,15 @@ export class SessionDO extends DurableObject<Env> {
     await this.stepAgent();
   }
 
+  /**
+   * `resolved` names the profile fields that actually moved on this call —
+   * which is what the audit row records. The manifest's `fillsFrom` is a
+   * declaration, not an event, and logging the declaration overcounts.
+   */
   private async runTool(
     name: string,
     args: Record<string, unknown>,
-  ): Promise<{ ok: boolean; text: string }> {
+  ): Promise<{ ok: boolean; text: string; resolved?: string[] }> {
     if (name === "list_available_origins") {
       return {
         ok: true,
@@ -640,6 +672,15 @@ export class SessionDO extends DurableObject<Env> {
     if (!(await this.allowOrigin(manifest.origin))) {
       return { ok: false, text: "origin not consented" };
     }
+    // Ask before driving anything. A call nobody can approve should not cost a
+    // Chromium launch, and a tool that cannot fill must say so rather than
+    // filling blanks and reporting success.
+    const prepared = await prepareFills(manifest.fillsFrom, args, this.approvals, {
+      origin: manifest.origin,
+      tool: name,
+    });
+    if (!prepared.ok) return { ok: false, text: prepared.text };
+    const { args: callArgs, resolved } = prepared;
     const live = await this.ensureBrowser();
     if (!live) return { ok: false, text: "no browser" };
     if (originFromUrl(live.page.url()) !== manifest.origin) {
@@ -657,7 +698,7 @@ export class SessionDO extends DurableObject<Env> {
       const native = await callNativeTool(
         live.page.evaluate.bind(live.page),
         manifest.nativeName,
-        args,
+        callArgs,
       );
       // A manifest with a nativeName proxies the store's own tool. If that tool
       // is not there, say so — empty steps must not report a fake success. And
@@ -669,13 +710,13 @@ export class SessionDO extends DurableObject<Env> {
       const how = native.polyfilled
         ? `${manifest.origin}'s own ${manifest.nativeName} (WebMCP supplied by this session)`
         : `${manifest.origin}'s own ${manifest.nativeName} (native WebMCP)`;
-      return { ok: true, text: native.text ?? `ran ${how}` };
+      return { ok: true, text: native.text ?? `ran ${how}`, resolved };
     }
     for (const step of manifest.steps) {
-      await this.runStep(live, step, args);
+      await this.runStep(live, step, callArgs);
     }
     this.setCurrentOrigin(manifest.origin);
-    return { ok: true, text: `ran ${name} at ${live.page.url()}` };
+    return { ok: true, text: `ran ${name} at ${live.page.url()}`, resolved };
   }
 
   private async runStep(
