@@ -46,7 +46,7 @@ echo "== 3. tools are listed and labelled (Phase A) =="
 TOOLS=$(mcp tools/list '{}')
 echo "$TOOLS" | grep -q 'fill_checkout_on_allbirds_com' \
   && pass "fill_checkout listed" || fail "fill_checkout missing"
-echo "$TOOLS" | grep -q 'Requires human approval in the mcpmatic console' \
+echo "$TOOLS" | grep -q 'Requires human approval in the BrowserMatic console' \
   && pass "approval note present" || fail "approval note missing"
 
 echo "== 4. THE BUG: fill_checkout with no console attached =="
