@@ -547,7 +547,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
         />
         {isConsole ? (
           <PasskeyBar
-            accountId={accountId()}
+            sessionToken={sessionToken}
             onSignedIn={(id) => {
               // Adopting a different account means different grants. Re-claim
               // this session under it and take what comes back.

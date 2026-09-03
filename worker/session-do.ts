@@ -217,6 +217,19 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /**
+   * The account this session was claimed by, for the passkey registration
+   * route only.
+   *
+   * Server-side callers only: the worker uses it to decide which account an
+   * authenticator may be attached to, and never returns it to a client. That
+   * is the whole point — registration must prove possession of the session,
+   * not merely knowledge of an account id.
+   */
+  async accountForPasskey(): Promise<{ accountId: string | null }> {
+    return { accountId: this.accountId() };
+  }
+
+  /**
    * Bind this session to an account, inheriting its grants.
    *
    * Claimed, not replaced: the session keeps its token, its browser and
@@ -337,6 +350,7 @@ export class SessionDO extends DurableObject<Env> {
     name: string,
     args: Record<string, unknown>,
   ): Promise<{ ok: boolean; text: string }> {
+    const startedAt = Date.now();
     const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
     // The MCP entry, and only this one, strips caller-supplied profile paths.
     // Otherwise a client could pass {"address.line1": "…"} and route around
@@ -355,7 +369,35 @@ export class SessionDO extends DurableObject<Env> {
     }
     const auditOrigin = manifest?.origin ?? this.currentOrigin() ?? "";
     this.recordAudit(auditOrigin, name, result.resolved ?? []);
+    this.recordSiteCall(manifest, result, Date.now() - startedAt);
     return { ok: result.ok, text: result.text };
+  }
+
+  /**
+   * What agents did to this site's tools, for the site's owner.
+   *
+   * A different record from the audit row written beside it, kept in a
+   * different place on purpose: the audit row is this person's account of
+   * which of their fields travelled, and this is the merchant's account of how
+   * their tool behaved for everyone. Nothing here identifies the caller, and
+   * the tool is named as the *site* knows it, not as we qualify it.
+   *
+   * Not awaited: telemetry must never be in the path of a tool result.
+   */
+  private recordSiteCall(
+    manifest: { origin: string; nativeName?: string; name: string } | null | undefined,
+    result: { ok: boolean; reason?: string },
+    ms: number,
+  ): void {
+    if (!manifest) return;
+    this.ctx.waitUntil(
+      this.env.SITE.getByName(manifest.origin).recordCall(
+        manifest.nativeName ?? manifest.name,
+        result.ok,
+        result.ok ? null : (result.reason ?? "failed"),
+        ms,
+      ),
+    );
   }
 
   async destroy(): Promise<void> {
@@ -547,7 +589,8 @@ export class SessionDO extends DurableObject<Env> {
   ): Promise<void> {
     this.driving = true;
     this.sendState();
-    let result: { ok: boolean; text: string; resolved?: string[] };
+    const startedAt = Date.now();
+    let result: { ok: boolean; text: string; resolved?: string[]; reason?: string };
     try {
       result = await this.runTool(name, args);
     } catch (err) {
@@ -574,6 +617,7 @@ export class SessionDO extends DurableObject<Env> {
       name,
       result.resolved ?? [],
     );
+    this.recordSiteCall(manifest, result, Date.now() - startedAt);
   }
 
   /**
@@ -612,7 +656,13 @@ export class SessionDO extends DurableObject<Env> {
   private async runTool(
     name: string,
     args: Record<string, unknown>,
-  ): Promise<{ ok: boolean; text: string; resolved?: string[] }> {
+  ): Promise<{
+    ok: boolean;
+    text: string;
+    resolved?: string[];
+    /** Failure class for site telemetry. Never a value or an argument. */
+    reason?: string;
+  }> {
     if (name === "list_available_origins") {
       return {
         ok: true,
@@ -786,12 +836,20 @@ export class SessionDO extends DurableObject<Env> {
         live.page.evaluate.bind(live.page),
         manifest.nativeName,
         callArgs,
+        // The tool's own schema, if we have observed this origin. Lets a call
+        // that cannot satisfy it be classified rather than thrown — the one
+        // fact a site owner can act on.
+        this.declaredSchemaFor(manifest.origin, manifest.nativeName),
       );
       // A manifest with a nativeName proxies the store's own tool. If that tool
       // is not there, say so — empty steps must not report a fake success. And
       // say *which* of the three failures it was.
       if (!native.used) {
-        return { ok: false, text: nativeFailure(manifest.nativeName, manifest.origin, native) };
+        return {
+          ok: false,
+          text: nativeFailure(manifest.nativeName, manifest.origin, native),
+          reason: native.reason,
+        };
       }
       this.setCurrentOrigin(manifest.origin);
       const how = native.polyfilled
@@ -1074,6 +1132,12 @@ export class SessionDO extends DurableObject<Env> {
     return this.env.BROWSER ? "idle" : "missing";
   }
 
+  /** The observed schema for a remote tool, when the page we read is its own. */
+  private declaredSchemaFor(origin: string, nativeName: string): unknown {
+    if (this.remoteToolsOrigin !== origin) return undefined;
+    return this.remoteTools.find((t) => t.name === nativeName)?.inputSchema;
+  }
+
   private async refreshRemoteTools(live: LiveBrowser): Promise<void> {
     if (!live.page.evaluate) {
       this.remoteTools = [];
@@ -1142,6 +1206,9 @@ function nativeFailure(
   }
   if (outcome.reason === "no-webmcp") {
     return `${origin} exposes no document.modelContext on this page`;
+  }
+  if (outcome.reason === "schema-mismatch") {
+    return `${nativeName} on ${origin} declares a schema these arguments cannot satisfy: ${outcome.error ?? "unknown"}`;
   }
   return `${nativeName} is not registered on ${origin} right now`;
 }

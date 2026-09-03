@@ -16,6 +16,8 @@ import {
 import { putChallenge, takeChallenge } from "./passkey-challenge";
 
 const RP_NAME = "mcpmatic";
+/** Same shape the worker's own routes match on. */
+const SESSION_TOKEN_RE = /^[A-Fa-f0-9]{64}$/;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -48,9 +50,23 @@ export async function handlePasskey(
   if (request.method !== "POST") return json({ error: "not found" }, 404);
 
   if (sub === "register/options") {
-    const body = (await readJson(request)) as { accountId?: unknown };
-    if (!isAccountId(body?.accountId)) {
-      return json({ error: "invalid accountId" }, 400);
+    // The account comes from the session, never from the request body.
+    //
+    // An account id is a bearer credential, so a body field would let anyone
+    // who learned one attach their own authenticator to it — durable access
+    // the owner cannot see and cannot revoke, obtained without ever holding
+    // the session. Requiring the capability token means registration proves
+    // possession of the same credential the rest of the product rests on, and
+    // knowing the account id alone is not enough.
+    const body = (await readJson(request)) as { sessionToken?: unknown };
+    if (typeof body?.sessionToken !== "string" || !SESSION_TOKEN_RE.test(body.sessionToken)) {
+      return json({ error: "invalid sessionToken" }, 400);
+    }
+    const { accountId } = await env.SESSION.getByName(
+      body.sessionToken,
+    ).accountForPasskey();
+    if (!isAccountId(accountId)) {
+      return json({ error: "session has no account" }, 400);
     }
     const options = await generateRegistrationOptions({
       rpName: RP_NAME,
@@ -58,7 +74,7 @@ export async function handlePasskey(
       userName: RP_NAME,
       // The account id *is* the user handle, which is what makes a login
       // discoverable: the authenticator hands it back and we know whose it is.
-      userID: utf8(body.accountId),
+      userID: utf8(accountId),
       authenticatorSelection: {
         residentKey: "required",
         userVerification: "preferred",
@@ -66,7 +82,7 @@ export async function handlePasskey(
     });
     await putChallenge(env.OAUTH_TOKENS, options.challenge, {
       kind: "register",
-      accountId: body.accountId,
+      accountId,
     });
     return json(options);
   }

@@ -14,6 +14,7 @@
       "/s/*/account",
       "/s/*/audit",
       "/account/passkey/*",
+      "/site/*",
       "/mcp",
       "/oauth/*"
     ]
@@ -23,7 +24,8 @@
       { "name": "SESSION", "class_name": "SessionDO" },
       { "name": "OAUTH_CLIENT", "class_name": "OAuthClientDO" },
       { "name": "OAUTH_CODE", "class_name": "OAuthCodeDO" },
-      { "name": "ACCOUNT", "class_name": "AccountDO" }
+      { "name": "ACCOUNT", "class_name": "AccountDO" },
+      { "name": "SITE", "class_name": "SiteDO" }
     ]
   },
   "kv_namespaces": [
@@ -34,7 +36,8 @@
     { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
     { "tag": "v2", "new_sqlite_classes": ["OAuthClientDO"] },
     { "tag": "v3", "new_sqlite_classes": ["OAuthCodeDO"] },
-    { "tag": "v4", "new_sqlite_classes": ["AccountDO"] }
+    { "tag": "v4", "new_sqlite_classes": ["AccountDO"] },
+    { "tag": "v5", "new_sqlite_classes": ["SiteDO"] }
   ],
   "browser": {
     "binding": "BROWSER"

@@ -157,3 +157,55 @@ describe("parseCallRemoteArgs", () => {
     });
   });
 });
+
+describe("callNativeTool classifies a schema mismatch", () => {
+  const declared = {
+    type: "object",
+    properties: { variantId: { type: "string" }, quantity: { type: "number" } },
+    required: ["variantId", "quantity"],
+  };
+
+  it("does not call the remote tool when the args cannot satisfy its schema", async () => {
+    // The merchant-facing signal: their schema requires a field the agent
+    // never sends. Calling anyway would return "threw" and lose the reason.
+    const evaluate = vi.fn(async () => ({ used: true, text: "ok" }));
+    const out = await callNativeTool(
+      evaluate,
+      "update_cart",
+      { variantId: "v1" },
+      declared,
+    );
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(out.used).toBe(false);
+    expect(out.reason).toBe("schema-mismatch");
+  });
+
+  it("names the missing field without quoting any value", async () => {
+    const out = await callNativeTool(
+      vi.fn(async () => ({ used: true })),
+      "update_cart",
+      { variantId: "secret-value" },
+      declared,
+    );
+    expect(out.error).toContain("quantity");
+    expect(out.error).not.toContain("secret-value");
+  });
+
+  it("calls through when the args satisfy the schema", async () => {
+    const evaluate = vi.fn(async () => ({ used: true, text: "ok" }));
+    const out = await callNativeTool(
+      evaluate,
+      "update_cart",
+      { variantId: "v1", quantity: 2 },
+      declared,
+    );
+    expect(evaluate).toHaveBeenCalled();
+    expect(out.used).toBe(true);
+  });
+
+  it("calls through when no schema is known, rather than inventing a failure", async () => {
+    const evaluate = vi.fn(async () => ({ used: true, text: "ok" }));
+    await callNativeTool(evaluate, "update_cart", {}, undefined);
+    expect(evaluate).toHaveBeenCalled();
+  });
+});

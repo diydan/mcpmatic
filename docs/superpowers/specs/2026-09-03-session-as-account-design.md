@@ -262,8 +262,21 @@ whether a browser tab happens to be open, which is worse.
 
 ## Analytics for site owners
 
-The audit table is already the right shape for this and needs no change. What
-is added is a read path.
+**Corrected during Phase C.** This section claimed the audit table was already
+the right shape and that telemetry was only a read path over it. Both halves
+were wrong, and building it exposed why.
+
+The audit table is `{origin, tool, field_names, ts}`. It has no outcome, no
+failure reason and no duration, so not one of the four metrics below is
+derivable from it. And telemetry cannot be account-scoped at all: a merchant
+needs calls from every visitor, and an account's rows are one person's.
+
+So site telemetry lives in its own store, `SiteDO`, keyed by origin, holding
+`{tool, ok, reason, ms, ts}` and nothing that identifies a caller. That is a
+better answer to this spec's own constraint than the one it proposed: the
+reason the audit table must never gain a value column is that it is a person's
+privacy record, and the fix is a second record for a second audience — not a
+first record made to serve both.
 
 `GET /site/<origin>/telemetry`, scoped to a single verified origin:
 
@@ -293,8 +306,12 @@ Boundaries, stated so they are not quietly crossed later:
 - No cross-origin joins. A site owner sees their origin, never a path through
   it.
 - No session identifiers, and no per-user counts.
-- Origin ownership is proved before any read: a DNS TXT record or a file at
-  `/.well-known/mcpmatic-<token>`.
+- Origin ownership is proved before any read: the owner publishes a token at
+  `/.well-known/mcpmatic.txt`, and that token is then the read credential —
+  whoever can put a file on the site is exactly the audience. The fetch runs
+  the same fail-closed SSRF guard as every other navigation, and a refused read
+  returns one answer for "not verified", "wrong token" and "unknown origin", so
+  it cannot become an oracle for which origins hold data.
 
 This requires audit rows to outlive the session, which is why they move to the
 `AccountDO` in §The account. The move is a relocation, not a reshape.
@@ -434,11 +451,14 @@ Same conventions as `tests/`:
   a bare `JSON.parse` on `field_names`, so one corrupt row threw and cost the
   entire log. A row that will not parse is now kept with an empty field list —
   the row is evidence a tool ran, and only the field list is missing. Closes the durability half of P1.3.
-- **C — telemetry.** Read path and origin ownership proof. Its two
-  dependencies now differ: audit durability is done (Phase B), but the
-  schema-mismatch failure class still does not exist — `nativeFailure`
-  classifies `threw` / `no-webmcp` / not-registered, and the sentence the
-  business case rests on needs instrumentation added inside `callNativeTool`.
+- **C — telemetry.** Built. `SiteDO` per origin, the ownership proof above,
+  and the schema-mismatch class the business case rests on: `callNativeTool`
+  now checks arguments against the tool's own declared schema (observed by
+  `discoverNativeTools`) and classifies rather than calls when they cannot
+  satisfy it. `checkArgs` is a deliberate subset of JSON Schema — required,
+  declared types, closed objects — because it exists to classify a failure, not
+  to validate input. With no usable schema it passes: "we do not know" must
+  never reach a site owner as their bug.
 
 A and B are independent — A is first because it fixes a live bug, not because
 B needs it. **C depends on B**: telemetry requires audit rows that outlive a

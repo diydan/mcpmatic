@@ -38,10 +38,15 @@ export function passkeysAvailable(): boolean {
   );
 }
 
-export async function registerPasskey(accountId: string): Promise<PasskeyResult> {
+/**
+ * `sessionToken`, not an account id: the worker derives the account from the
+ * session so that registering a passkey proves possession of the capability,
+ * not mere knowledge of an account id someone could have seen.
+ */
+export async function registerPasskey(sessionToken: string): Promise<PasskeyResult> {
   try {
     const options = (await postJson("/account/passkey/register/options", {
-      accountId,
+      sessionToken,
     })) as Parameters<typeof startRegistration>[0]["optionsJSON"];
     const response = await startRegistration({ optionsJSON: options });
     await postJson("/account/passkey/register/verify", { response });
