@@ -65,7 +65,9 @@ echo "== 5. the schemas the telemetry classifier depends on =="
 # navigate_to first. list_remote_tools reports on the page that is *open* and
 # never starts a browser, and granting consent does not open one.
 mcp tools/call "{\"name\":\"navigate_to\",\"arguments\":{\"origin\":\"$ORIGIN\"}}" >/dev/null
-REMOTE=$(mcp tools/call '{"name":"list_remote_tools","arguments":{}}')
+# Unescape: the schemas arrive inside a JSON-RPC string, so every quote is
+# backslashed and a naive grep for "required" finds nothing.
+REMOTE=$(mcp tools/call '{"name":"list_remote_tools","arguments":{}}' | sed 's/\\"/"/g')
 echo "$REMOTE" | grep -q 'WebMCP tool' \
   && pass "storefront exposed its own tools" \
   || fail "no remote tools seen: $(echo "$REMOTE" | head -c 300)"
