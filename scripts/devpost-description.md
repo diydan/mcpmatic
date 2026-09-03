@@ -1,7 +1,7 @@
-# WebMCP Challenge — Devpost entry text for Browsermatic
+# WebMCP Challenge — Devpost entry text for BrowserMatic
 
 ## Project name
-Browsermatic
+BrowserMatic
 
 ## Tagline
 Cross-origin WebMCP. One conversation. Names only.
@@ -10,7 +10,7 @@ Cross-origin WebMCP. One conversation. Names only.
 
 ## Project story (paste into "Please describe your project")
 
-Your AI agent is becoming a customer of the open web. Just as mobile-friendly sites won the last decade, AI-callable sites will win this one. Browsermatic is the session page that holds your consent and lets one agent shop, fill, and book across any site using each site's own WebMCP tools on your behalf.
+Your AI agent is becoming a customer of the open web. Just as mobile-friendly sites won the last decade, AI-callable sites will win this one. BrowserMatic is the session page that holds your consent and lets one agent shop, fill, and book across any site using each site's own WebMCP tools on your behalf.
 
 **Why this is a strong fit for WebMCP**
 
@@ -42,7 +42,7 @@ Now, on one façade page:
 4. Grant Brooklinen. `search_catalog_on_brooklinen_com` joins the same tool list. Allbirds tools stay registered — one AbortController per tool, so granting a second origin cannot wipe the first.
 5. `fill_checkout_on_allbirds_com` asks the human to bless name and address fields before they cross the Worker. Payment is never submitted.
 
-Five years from now every site will have WebMCP. Browsermatic is what that future looks like from the user side: one chat, many sites, each site owning its own tools. The video above is the demo.
+Five years from now every site will have WebMCP. BrowserMatic is what that future looks like from the user side: one chat, many sites, each site owning its own tools. The video above is the demo.
 
 People grant origins and bless fields. Agents call structured tools. The store still owns its handlers. That is WebMCP spanning the open web, not replacing it.
 
@@ -78,7 +78,7 @@ First commit 2026-08-31. MIT licensed. Hosted on Cloudflare Workers. Live URL, p
 
 ## What is next (paste into "What is next")
 
-Beyond the user session, the same primitives enable a developer platform: hosted WebMCP tool registration, call analytics, error tracking, and a public directory of agent-callable sites. Today, merchants self-host their `registerTool` scripts; tomorrow, Browsermatic can host, observe, and certify them. The architecture that makes a user's audit row cannot store a value is the same architecture that makes a site's tool surface auditable from the outside.
+Beyond the user session, the same primitives enable a developer platform: hosted WebMCP tool registration, call analytics, error tracking, and a public directory of agent-callable sites. Today, merchants self-host their `registerTool` scripts; tomorrow, BrowserMatic can host, observe, and certify them. The architecture that makes a user's audit row cannot store a value is the same architecture that makes a site's tool surface auditable from the outside.
 
 ---
 
@@ -141,7 +141,7 @@ Clip 1 — 0:00–0:30. Home page → Allbirds session. Voice: "Your AI agent is
 Clip 2 — 0:30–1:00. Grant Brooklinen. Both stores' chips in one list. Voice: "One conversation, many origins, each site owns its tools."
 Clip 3 — 1:00–1:45. One message, two stores. "Find wool runners in size 9 on both stores." Cut to results.
 Clip 4 — 1:45–2:15. Audit row close-up. Hold on the row. Cursor off the row to show what is not there: no value column.
-Clip 5 — 2:15–2:45. Close. "Browsermatic: cross-origin WebMCP, one conversation, names only."
+Clip 5 — 2:15–2:45. Close. "BrowserMatic: cross-origin WebMCP, one conversation, names only."
 
 Total: 2:45. Audio covers everything on screen. No music. No title card.
 
