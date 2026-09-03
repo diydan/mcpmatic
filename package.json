@@ -1,10 +1,10 @@
 {
-  "name": "mcpmatic",
+  "name": "browsermatic",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "description": "WebMCP façade: personalization without surveillance. Tools for sites that have none.",
+  "description": "Browsermatic: a WebMCP session page that spans origins. Cross-origin in one conversation. Audit by names only.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
