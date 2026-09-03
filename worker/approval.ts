@@ -220,7 +220,7 @@ export function approvalFailureText(
   const fields = fieldNames.join(", ");
   switch (reason) {
     case "needs-console":
-      return `needs-console: open the mcpmatic console to approve ${fields}`;
+      return `needs-console: open the BrowserMatic console to approve ${fields}`;
     case "denied":
       // Same words register-all.ts throws on the façade path. One event, one
       // vocabulary, whichever surface the caller came from.
@@ -228,6 +228,6 @@ export function approvalFailureText(
     case "timeout":
       return `approval timed out: nobody approved ${fields}`;
     case "disconnected":
-      return `the mcpmatic console closed before approving ${fields}`;
+      return `the BrowserMatic console closed before approving ${fields}`;
   }
 }

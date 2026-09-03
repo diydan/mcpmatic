@@ -3,7 +3,7 @@ import { makeResolve4 } from "./doh-resolve4";
 import { normaliseOrigin } from "../shared/origin";
 
 /** Where an owner publishes the token that proves they control the origin. */
-export const WELL_KNOWN_PATH = "/.well-known/mcpmatic.txt";
+export const WELL_KNOWN_PATH = "/.well-known/browsermatic.txt";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

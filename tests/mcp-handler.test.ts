@@ -18,7 +18,7 @@ describe("MCP handler dispatch", () => {
       {} as FakeSession,
     );
     expect(resp.result).toMatchObject({
-      serverInfo: { name: "mcpmatic" },
+      serverInfo: { name: "browsermatic" },
       capabilities: { tools: { listChanged: false } },
     });
   });

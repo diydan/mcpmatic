@@ -26,7 +26,7 @@
  * validates the result against `InitializeResultSchema`, sends the
  * `notifications/initialized` notification, and populates
  * `getServerVersion()`. A successful assertion on
- * `serverInfo.name === "mcpmatic"` is wire-format compatibility proof.
+ * `serverInfo.name === "browsermatic"` is wire-format compatibility proof.
  *
  * The SSRF guard (`isPrivateUrl`) is mocked to short-circuit to "public"
  * so the registered redirect_uri does not need a real DNS lookup. The
@@ -333,7 +333,7 @@ describe("OAuth + real MCP SDK client", () => {
     vi.mocked(isPrivateUrl).mockResolvedValue(false);
   });
 
-  it("drives register → authorize → token → SDK initialize → serverInfo.name === 'mcpmatic'", async () => {
+  it("drives register → authorize → token → SDK initialize → serverInfo.name === 'browsermatic'", async () => {
     // 1. Walk the OAuth setup with direct handler calls (the same path
     //    oauth-e2e.test.ts uses). After this we have a real access_token
     //    sitting in `token:<access_token>` in our in-memory KV shim.
@@ -379,7 +379,7 @@ describe("OAuth + real MCP SDK client", () => {
 
     const serverInfo = client.getServerVersion();
     expect(serverInfo).toBeDefined();
-    expect(serverInfo!.name).toBe("mcpmatic");
+    expect(serverInfo!.name).toBe("browsermatic");
     expect(serverInfo!.version).toBe("0.1.0");
 
     // 4. Clean shutdown. close() aborts the SDK's internal AbortController

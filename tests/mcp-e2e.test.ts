@@ -44,7 +44,7 @@ describe("MCP end-to-end (spec-compliance gate)", () => {
     const response = await handleMcp(request, makeEnv());
     expect(response.status).toBe(200);
     const body = (await response.json()) as { result: { serverInfo: { name: string } } };
-    expect(body.result.serverInfo.name).toBe("mcpmatic");
+    expect(body.result.serverInfo.name).toBe("browsermatic");
   });
 
   it("rejects a request with no Authorization header", async () => {
