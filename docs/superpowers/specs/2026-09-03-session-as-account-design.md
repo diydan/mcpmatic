@@ -163,23 +163,42 @@ With `missing` non-empty:
    replies `approval_result { id, ok: true, fills }`. Denies — `{ id, ok:
    false }`, and `runTool` returns `{ ok: false, text: "user denied: profile
    fields not sent" }`, the same string the façade path already throws.
-5. The DO merges `fills` into `args`, runs the steps, writes the audit row
+5. The DO merges `fills` into `args`, runs the steps (via `executeManifest`,
+   shared with the late path so an approval collected by `check_approval` takes
+   the same route through the browser), writes the audit row
    (`{origin, tool, fieldNames, ts}`, unchanged), and **discards `fills`**.
    Values live in one local variable for the duration of one call. Nothing
    persists them; there remains nowhere to log them.
-6. Timeout — **45 seconds**, and the number is load-bearing. The MCP SDK's
-   `DEFAULT_REQUEST_TIMEOUT_MSEC` is 60 000
-   (`@modelcontextprotocol/sdk/dist/esm/shared/protocol.js:8`), so our timeout
-   must fall *under* the client's or the client abandons the request while the
-   human is still reading the dialog, and the approval lands nowhere. Returns
-   `{ ok: false, text: "approval timed out" }`.
+6. **The caller waits ten seconds, not forty-five.** Revised after a deployed
+   run; the original design is preserved below because the reason it failed is
+   the useful part.
 
-   45 seconds is tight for a human. The SDK's `resetTimeoutOnProgress` option
-   means a server that emits progress notifications extends the client's
-   window, so the DO can hold a pending approval open far longer by pinging
-   progress while it waits. That is the better answer and should be
-   implemented in Phase A; the 45-second floor is what applies to a client
-   that does not opt in.
+   It said: wait the whole approval window, 45 seconds, chosen to fall under
+   the MCP SDK's `DEFAULT_REQUEST_TIMEOUT_MSEC` of 60 000
+   (`@modelcontextprotocol/sdk/dist/esm/shared/protocol.js:8`) so the client
+   would not abandon the request first.
+
+   That number is right and the approach is wrong. Blocking for the whole
+   window spends the client's entire budget on one call, and — the part the
+   design missed — leaves the request exposed for all 45 seconds to a Durable
+   Object reset. A reset destroys the pending map, the resolve callbacks and
+   the expiry timer together. The console's answer then arrives at a fresh
+   instance that has never heard of the id, `settle` correctly ignores it,
+   nothing resolves, and the caller hangs until the platform errors the RPC.
+   A deployed run did exactly this and took three minutes to fail with
+   `"Durable Object reset because its code was updated."`
+
+   So: `requestBounded` waits **10 seconds**, which covers the case that
+   actually matters — a human already watching the console clicks within a few
+   — and otherwise returns `approval-pending` with an id. The request stays
+   live. When it is answered or expires, a continuation runs the work, files
+   the result under that id, and writes the audit and telemetry rows;
+   `check_approval` redeems it.
+
+   This is also why a plain `setTimeout` remains adequate inside a Durable
+   Object: with the bounded wait, no caller is blocked on the expiry timer, so
+   a reset that takes the timer strands nobody. The single-alarm constraint
+   (`alarm()` already serves the session TTL) is therefore not in the way.
 
 Protocol additions, `shared/protocol.ts`, additive and still `v: 1`:
 
@@ -212,11 +231,21 @@ the same merge `register-all.ts:172` performs today, moved to the other end of
 the wire.
 
 **This inherits P0.1's rule: complete on every exit path.** Deny, timeout,
-console disconnect mid-approval, page reload, and DO hibernation each resolve
-the pending call with an explicit failure. A suspended `runTool` must never
-strand an MCP client's request. The in-flight request keeps the DO alive for
-the duration, so the timeout can be a plain timer; a hibernation that happens
-anyway resolves as a disconnect.
+console disconnect mid-approval and page reload each resolve the pending call
+with an explicit failure.
+
+**The sentence that used to end this paragraph was false**, and it is worth
+recording rather than quietly deleting:
+
+> The in-flight request keeps the DO alive for the duration, so the timeout can
+> be a plain timer; a hibernation that happens anyway resolves as a disconnect.
+
+A reset does not resolve as a disconnect. It orphans the call silently, taking
+the timer with it. Nothing in the design noticed, because every test used a
+fake gate in a process that never resets — the mechanism was correct in the
+tests and unsound on the platform. The bounded wait in step 6 is what makes the
+rule true: a caller is never suspended long enough for a reset to strand it,
+and a reset that happens after the caller has its id costs only that id.
 
 **Shape note.** This is the same suspend-a-turn-and-resume pattern as the
 existing `tool_call` / `tool_result` pair, including its correlation-id
