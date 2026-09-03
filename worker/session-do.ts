@@ -49,12 +49,6 @@ import {
 } from "./native-webmcp";
 import type { DiscoveredTool } from "../shared/protocol";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
-import {
-  PageErrorLog,
-  attachPageErrorCapture,
-  describePageErrors,
-  type PageEventSource,
-} from "./page-errors";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 /** Grace after the last client disconnects before the browser is released. */
@@ -79,7 +73,6 @@ type LiveBrowser = {
     };
     setViewportSize?: (size: { width: number; height: number }) => Promise<void>;
     addInitScript?: (script: string | { content: string }) => Promise<void>;
-    on?: PageEventSource["on"];
   };
   cdp: CdpSession | null;
 };
@@ -102,11 +95,6 @@ export class SessionDO extends DurableObject<Env> {
    * duplicate generation from a burst of misses or repeated manual clicks.
    */
   private generatingOrigins = new Set<string>();
-  /**
-   * What the open page reported went wrong. Memory-only and per session by
-   * design — see page-errors.ts on why this is not the audit table.
-   */
-  private pageErrors = new PageErrorLog();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -557,14 +545,6 @@ export class SessionDO extends DurableObject<Env> {
       this.setCurrentOrigin(originFromUrl(url));
       return { ok: true, text: `URL: ${url}\nTitle: ${title}\n\n${body}` };
     }
-    if (name === "get_page_errors") {
-      // Reports on the browser; never starts one, same rule as get_page_state.
-      const entries = this.pageErrors.all();
-      if (!this.live && entries.length === 0) {
-        return { ok: true, text: "No remote browser yet, so nothing has been recorded." };
-      }
-      return { ok: true, text: describePageErrors(entries) };
-    }
     if (name === "list_remote_tools") {
       // Reports on the page that is open; never starts a browser, same rule as
       // get_page_state.
@@ -837,10 +817,6 @@ export class SessionDO extends DurableObject<Env> {
       } catch {
         /* older binding without addInitScript; native path will report why */
       }
-      // Subscribe before the first navigation, or the errors of the page that
-      // navigation loads are missed. A binding without page.on captures
-      // nothing and says so through get_page_errors rather than failing here.
-      attachPageErrorCapture(page as PageEventSource, this.pageErrors);
       let cdp: CdpSession | null = null;
       try {
         cdp = wrapCdp(await page.context().newCDPSession(page));

@@ -70,7 +70,6 @@ describe("incremental registration", () => {
     const report = await registration.sync(new Set());
     expect(report.registered.sort()).toEqual([
       "call_remote_tool",
-      "get_page_errors",
       "get_page_state",
       "list_available_origins",
       "list_remote_tools",

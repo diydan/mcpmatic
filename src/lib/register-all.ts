@@ -105,13 +105,6 @@ const SPINE: ToolSpec[] = [
     origin: null,
   },
   {
-    name: "get_page_errors",
-    description:
-      "Errors the open page itself reported this session: uncaught exceptions, console errors and warnings, failed requests, and 4xx/5xx responses. A replayed step that quietly did nothing usually left a trace here.",
-    inputSchema: { ...EMPTY_INPUT },
-    origin: null,
-  },
-  {
     name: "navigate_to",
     description:
       "Navigate the remote browser to an https origin the user has granted.",

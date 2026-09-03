@@ -7,9 +7,9 @@ describe("SessionDO.listTools contract (mocked via buildToolList)", () => {
   // e2e test in Task 9 against @modelcontextprotocol/sdk.
   it("returns SPINE only when no origins consented", async () => {
     const list = await buildToolList(new Set());
-    expect(list.length).toBe(4);
+    expect(list.length).toBe(3);
     expect(list.map((t) => t.name).sort()).toEqual(
-      ["get_page_errors", "get_page_state", "list_available_origins", "navigate_to"],
+      ["get_page_state", "list_available_origins", "navigate_to"],
     );
   });
 
