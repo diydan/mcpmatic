@@ -40,6 +40,13 @@ describe("manifestFor", () => {
     const kv = fakeKv({});
     expect(await manifestFor("nonexistent_tool", kv)).toBeUndefined();
   });
+
+  it("resolves a spine tool without touching kv", async () => {
+    const kv = fakeKv({});
+    const m = await manifestFor("get_page_state", kv);
+    expect(m).toBeUndefined();
+    expect(kv.get).not.toHaveBeenCalled();
+  });
 });
 
 describe("originOfTool", () => {

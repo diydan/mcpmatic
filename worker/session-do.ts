@@ -28,7 +28,7 @@ import {
   runTurn,
   type ChatTurn,
 } from "./agent";
-import { MANIFESTS, manifestFor, originOfTool } from "./manifests";
+import { MANIFESTS, manifestFor } from "./manifests";
 import { buildToolList } from "./mcp/tools";
 import {
   callNativeTool,
@@ -243,9 +243,9 @@ export class SessionDO extends DurableObject<Env> {
         text: err instanceof Error ? err.message : "tool failed",
       };
     }
-    const fieldNames = (await manifestFor(name, this.env.MANIFEST_REGISTRY))?.fillsFrom ?? [];
-    const auditOrigin =
-      (await originOfTool(name, this.env.MANIFEST_REGISTRY)) ?? this.currentOrigin() ?? "";
+    const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
+    const fieldNames = manifest?.fillsFrom ?? [];
+    const auditOrigin = manifest?.origin ?? this.currentOrigin() ?? "";
     this.recordAudit(auditOrigin, name, fieldNames);
     return result;
   }
@@ -440,11 +440,11 @@ export class SessionDO extends DurableObject<Env> {
       ok: result.ok,
       result: result.text,
     });
-    const fieldNames = (await manifestFor(name, this.env.MANIFEST_REGISTRY))?.fillsFrom ?? [];
+    const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
     this.recordAudit(
-      (await originOfTool(name, this.env.MANIFEST_REGISTRY)) ?? this.currentOrigin() ?? "",
+      manifest?.origin ?? this.currentOrigin() ?? "",
       name,
-      fieldNames,
+      manifest?.fillsFrom ?? [],
     );
   }
 

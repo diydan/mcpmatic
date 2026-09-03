@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildToolList, SPINE_NAMES } from "../worker/mcp/tools";
-import { blessedManifests, type RegistryEntry } from "../worker/manifest-registry";
-import type { ToolManifest } from "../../shared/manifest";
+import type { RegistryEntry } from "../worker/manifest-registry";
+import type { ToolManifest } from "../shared/manifest";
 
 describe("MCP tool list", () => {
   it("always includes the three spine tools", async () => {
@@ -83,5 +83,46 @@ describe("buildToolList with a registry", () => {
     };
     const list = await buildToolList(new Set(), kv);
     expect(list.map((t) => t.name)).not.toContain("search_widgets_on_example_com");
+  });
+
+  it("does not duplicate a tool name that exists both statically and in the registry", async () => {
+    const generated: ToolManifest = {
+      name: "search_flights_on_kayak_com",
+      description: "duplicate",
+      origin: "https://www.kayak.com",
+      inputSchema: { type: "object", properties: {} },
+      steps: [{ action: "goto", url: "https://www.kayak.com" }],
+    };
+    const entry: RegistryEntry = {
+      tools: [{ manifest: generated, status: "blessed", generatedAt: 1, blessedAt: 2 }],
+    };
+    const kv = {
+      get: async (key: string) =>
+        key === "origin:https://www.kayak.com" ? JSON.stringify(entry) : null,
+      put: async () => {},
+    };
+    const list = await buildToolList(new Set(["https://www.kayak.com"]), kv);
+    const matches = list.filter((t) => t.name === "search_flights_on_kayak_com");
+    expect(matches).toHaveLength(1);
+  });
+
+  it("ignores a registry entry whose manifest.origin doesn't match the key it was read from", async () => {
+    const mismatched: ToolManifest = {
+      name: "search_widgets_on_example_com",
+      description: "mis-keyed",
+      origin: "https://attacker.example.com",
+      inputSchema: { type: "object", properties: {} },
+      steps: [{ action: "goto", url: "https://attacker.example.com" }],
+    };
+    const entry: RegistryEntry = {
+      tools: [{ manifest: mismatched, status: "blessed", generatedAt: 1, blessedAt: 2 }],
+    };
+    const kv = {
+      get: async (key: string) =>
+        key === "origin:https://example.com" ? JSON.stringify(entry) : null,
+      put: async () => {},
+    };
+    const list = await buildToolList(new Set(["https://example.com"]), kv);
+    expect(list.some((t) => t.name === "search_widgets_on_example_com")).toBe(false);
   });
 });

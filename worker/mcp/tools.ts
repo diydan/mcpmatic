@@ -41,28 +41,35 @@ export const SPINE_NAMES = SPINE.map((t) => t.name);
  * manifests are included only for granted origins — ungranted origins are
  * invisible, not "denied at call time."
  */
+function toDescriptor(m: ToolManifest): McpToolDescriptor {
+  return {
+    name: m.name,
+    description: m.description,
+    inputSchema: m.inputSchema as unknown as Record<string, unknown>,
+  };
+}
+
 export async function buildToolList(
   consented: ReadonlySet<string>,
   kv?: KvLike,
 ): Promise<McpToolDescriptor[]> {
   const out: McpToolDescriptor[] = [...SPINE];
+  const seen = new Set(out.map((t) => t.name));
   for (const m of MANIFESTS) {
     if (!consented.has(m.origin)) continue;
-    out.push({
-      name: m.name,
-      description: m.description,
-      inputSchema: m.inputSchema as unknown as Record<string, unknown>,
-    });
+    out.push(toDescriptor(m));
+    seen.add(m.name);
   }
   if (kv) {
     for (const origin of consented) {
       const entry = await getRegistryEntry(kv, origin);
       for (const m of blessedManifests(entry)) {
-        out.push({
-          name: m.name,
-          description: m.description,
-          inputSchema: m.inputSchema as unknown as Record<string, unknown>,
-        });
+        // A registry entry that disagrees with its own key (mis-keyed data)
+        // must never list a tool for an origin the caller didn't consent to.
+        if (m.origin !== origin) continue;
+        if (seen.has(m.name)) continue;
+        out.push(toDescriptor(m));
+        seen.add(m.name);
       }
     }
   }

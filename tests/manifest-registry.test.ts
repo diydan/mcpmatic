@@ -75,4 +75,9 @@ describe("getBlessedManifestByName", () => {
     const kv = fakeKv({ "tool:search_widgets_on_example_com": JSON.stringify(TOOL) });
     expect(await getBlessedManifestByName(kv, "search_widgets_on_example_com")).toEqual(TOOL);
   });
+
+  it("returns undefined for a malformed stored value (missing required fields)", async () => {
+    const kv = fakeKv({ "tool:bad": JSON.stringify({ name: "bad" }) });
+    expect(await getBlessedManifestByName(kv, "bad")).toBeUndefined();
+  });
 });
