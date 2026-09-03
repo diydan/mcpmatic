@@ -1,3 +1,5 @@
+import type { ToolManifest } from "./manifest";
+
 export const PROTOCOL_V = 1 as const;
 
 export type ToolSchema = {
@@ -67,6 +69,8 @@ export type ClientMessage =
     }
   | { v: 1; type: "screencast"; on: boolean }
   | { v: 1; type: "autonomous"; on: boolean }
+  | { v: 1; type: "generate_manifest"; origin: string }
+  | { v: 1; type: "manifest_decision"; origin: string; name: string; bless: boolean }
   | { v: 1; type: "ping" };
 
 export type ServerMessage =
@@ -100,6 +104,13 @@ export type ServerMessage =
     }
   | { v: 1; type: "audit"; rows: AuditRow[] }
   | { v: 1; type: "error"; message: string }
+  | {
+      v: 1;
+      type: "manifest_draft";
+      origin: string;
+      /** Only ever draft-status tools — nothing here is callable yet. */
+      tools: ToolManifest[];
+    }
   | { v: 1; type: "pong" };
 
 export function parseClientMessage(raw: string): ClientMessage | null {
