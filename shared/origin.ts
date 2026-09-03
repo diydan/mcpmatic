@@ -77,3 +77,40 @@ export function unionOrigins(
   }
   return out;
 }
+
+/**
+ * Resolve a typed site against a known catalog, so `allbirds.com` reaches the
+ * storefront rather than a neighbouring origin with no tools.
+ *
+ * `https://allbirds.com` and `https://www.allbirds.com` are different origins,
+ * and that distinction is deliberate — consent keys on it. But a person typing
+ * the bare host means the store, and granting the bare host produced a session
+ * that navigated to the storefront (which redirects to `www`) while consenting
+ * to something else: no manifest matched, so no tools registered at all.
+ *
+ * Only an exact host match, ignoring a leading `www.`, is resolved. Anything
+ * outside the catalog is returned exactly as it normalises, because guessing
+ * `www` for arbitrary sites would grant an origin nobody asked for.
+ */
+export function canonicalOrigin(
+  raw: string,
+  catalog: readonly string[],
+): string | null {
+  const normalised = normaliseOrigin(raw);
+  if (!normalised) return null;
+  const bare = (host: string) => host.replace(/^www\./, "");
+  let typed: string;
+  try {
+    typed = bare(new URL(normalised).hostname);
+  } catch {
+    return normalised;
+  }
+  for (const known of catalog) {
+    try {
+      if (bare(new URL(known).hostname) === typed) return known;
+    } catch {
+      /* a malformed catalog entry is not a match */
+    }
+  }
+  return normalised;
+}
