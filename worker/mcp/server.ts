@@ -40,7 +40,7 @@ export async function dispatch(
   if (req.method === "initialize") {
     return success(id, {
       protocolVersion: "2025-03-26",
-      serverInfo: { name: "mcpmatic", version: "0.1.0" },
+      serverInfo: { name: "browsermatic", version: "0.1.0" },
       capabilities: { tools: { listChanged: false } },
     });
   }

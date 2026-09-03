@@ -66,7 +66,7 @@ export const SPINE_NAMES = SPINE.map((t) => t.name);
  * description so a planning client knows the cost before it calls, rather
  * than discovering it in an error.
  */
-export const APPROVAL_NOTE = "Requires human approval in the mcpmatic console.";
+export const APPROVAL_NOTE = "Requires human approval in the BrowserMatic console.";
 
 function toDescriptor(m: ToolManifest): McpToolDescriptor {
   return {

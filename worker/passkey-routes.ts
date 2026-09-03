@@ -15,7 +15,7 @@ import {
 } from "./passkey";
 import { putChallenge, takeChallenge } from "./passkey-challenge";
 
-const RP_NAME = "mcpmatic";
+const RP_NAME = "BrowserMatic";
 /** Same shape the worker's own routes match on. */
 const SESSION_TOKEN_RE = /^[A-Fa-f0-9]{64}$/;
 
