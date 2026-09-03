@@ -1,5 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { unionOrigins } from "../shared/origin";
+import { AUDIT_DDL, type AuditRow } from "../shared/protocol";
+import { toAuditRows, type StoredAuditRow } from "./audit-rows";
 
 /**
  * The durable half of a session.
@@ -20,6 +22,10 @@ export class AccountDO extends DurableObject<Env> {
            granted_at INTEGER NOT NULL
          )`,
       );
+      // Same DDL as the session's, deliberately: {origin, tool, field_names,
+      // ts}, no value column, ever. The durable copy of a log that must not be
+      // able to hold a value is still a log that cannot hold one.
+      this.ctx.storage.sql.exec(AUDIT_DDL);
       this.ctx.storage.sql.exec(
         `CREATE TABLE IF NOT EXISTS sessions (
            token TEXT PRIMARY KEY,
@@ -73,6 +79,37 @@ export class AccountDO extends DurableObject<Env> {
     const merged = unionOrigins(await this.listGrants(), sessionGrants);
     for (const origin of merged) await this.grant(origin);
     return { grants: merged };
+  }
+
+  /**
+   * The durable copy. The session keeps its own rows as the live view it
+   * broadcasts; this is the one that survives the session's two-hour TTL,
+   * which is what per-origin telemetry needs to exist at all.
+   */
+  async recordAudit(
+    origin: string,
+    tool: string,
+    fieldNames: string[],
+    ts: number,
+  ): Promise<void> {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO audit (origin, tool, field_names, ts) VALUES (?, ?, ?, ?)`,
+      origin,
+      tool,
+      JSON.stringify(fieldNames),
+      ts,
+    );
+  }
+
+  async listAudit(limit = 200): Promise<AuditRow[]> {
+    return toAuditRows(
+      this.ctx.storage.sql
+        .exec<StoredAuditRow>(
+          `SELECT origin, tool, field_names, ts FROM audit ORDER BY ts DESC LIMIT ?`,
+          limit,
+        )
+        .toArray(),
+    );
   }
 
   async listSessions(): Promise<string[]> {

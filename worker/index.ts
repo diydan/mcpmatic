@@ -47,6 +47,15 @@ export default {
       return json({ ok: true, origin });
     }
 
+    // Read-only. The durable log the account holds, or the session's own rows
+    // when it has no account. Rows are {origin, tool, fieldNames, ts} — there
+    // is no value column to expose.
+    const auditMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/audit$/);
+    if (auditMatch && request.method === "GET") {
+      const stub = env.SESSION.getByName(auditMatch[1]);
+      return json({ rows: await stub.listHistory() });
+    }
+
     // Bind a session to an account so its grants outlive the session's TTL.
     // The account id is a bearer credential the console holds (see
     // worker/account.ts) — validated for shape here, the way every other

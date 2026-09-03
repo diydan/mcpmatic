@@ -12,6 +12,7 @@
       "/s/*/bridge",
       "/s/*/consent",
       "/s/*/account",
+      "/s/*/audit",
       "/mcp",
       "/oauth/*"
     ]

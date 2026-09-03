@@ -48,6 +48,7 @@ import {
 } from "./approval";
 import { parseBridgeRole } from "./bridge-role";
 import { claimDecision } from "./account";
+import { toAuditRows, type StoredAuditRow } from "./audit-rows";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 /**
@@ -296,17 +297,24 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   async listAudit(): Promise<AuditRow[]> {
-    const rows = this.ctx.storage.sql
-      .exec<{ origin: string; tool: string; field_names: string; ts: number }>(
-        `SELECT origin, tool, field_names, ts FROM audit ORDER BY ts DESC LIMIT 50`,
-      )
-      .toArray();
-    return rows.map((r) => ({
-      origin: r.origin,
-      tool: r.tool,
-      fieldNames: JSON.parse(r.field_names) as string[],
-      timestamp: r.ts,
-    }));
+    return toAuditRows(
+      this.ctx.storage.sql
+        .exec<StoredAuditRow>(
+          `SELECT origin, tool, field_names, ts FROM audit ORDER BY ts DESC LIMIT 50`,
+        )
+        .toArray(),
+    );
+  }
+
+  /**
+   * The account's log, which outlives this session. Falls back to the
+   * session's own rows when there is no account — an unclaimed session is
+   * still a working session.
+   */
+  async listHistory(): Promise<AuditRow[]> {
+    const id = this.accountId();
+    if (!id) return this.listAudit();
+    return this.env.ACCOUNT.getByName(id).listAudit();
   }
 
   /**
@@ -964,13 +972,29 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   private recordAudit(origin: string, tool: string, fieldNames: string[]): void {
+    const ts = Date.now();
     this.ctx.storage.sql.exec(
       `INSERT INTO audit (origin, tool, field_names, ts) VALUES (?, ?, ?, ?)`,
       origin,
       tool,
       JSON.stringify(fieldNames),
-      Date.now(),
+      ts,
     );
+    // Mirror to the account so the row outlives this session. Same reasoning
+    // as consent: the local table stays the read path the broadcast uses, and
+    // the durable copy is what a new session — or per-origin telemetry — can
+    // still see tomorrow.
+    const accountId = this.accountId();
+    if (accountId) {
+      this.ctx.waitUntil(
+        this.env.ACCOUNT.getByName(accountId).recordAudit(
+          origin,
+          tool,
+          fieldNames,
+          ts,
+        ),
+      );
+    }
     void this.listAudit()
       .then((rows) => this.broadcast({ v: 1, type: "audit", rows }))
       .catch(() => {

@@ -89,6 +89,7 @@ import worker from "../worker/index";
  */
 function makeEnv(): Env & {
   __claimAccount: ReturnType<typeof vi.fn>;
+  __listHistory: ReturnType<typeof vi.fn>;
   __sessionGetByName: ReturnType<typeof vi.fn>;
   __oauthClientGetByName: ReturnType<typeof vi.fn>;
   __oauthCodeGetByName: ReturnType<typeof vi.fn>;
@@ -97,9 +98,18 @@ function makeEnv(): Env & {
     ok: true,
     consent: ["https://www.allbirds.com"],
   }));
+  const listHistory = vi.fn(async () => [
+    {
+      origin: "https://www.allbirds.com",
+      tool: "fill_checkout_on_allbirds_com",
+      fieldNames: ["address.line1"],
+      timestamp: 1,
+    },
+  ]);
   const sessionGetByName = vi.fn((_name: string) => ({
     initSession: async (_token: string) => {},
     claimAccount,
+    listHistory,
     fetch: async (_req: Request) => new Response(null, { status: 200 }),
   }));
   const oauthClientGetByName = vi.fn((_name: string) => ({
@@ -114,10 +124,12 @@ function makeEnv(): Env & {
     OAUTH_CODE: { getByName: oauthCodeGetByName },
     __sessionGetByName: sessionGetByName,
     __claimAccount: claimAccount,
+    __listHistory: listHistory,
     __oauthClientGetByName: oauthClientGetByName,
     __oauthCodeGetByName: oauthCodeGetByName,
   } as unknown as Env & {
     __claimAccount: ReturnType<typeof vi.fn>;
+    __listHistory: ReturnType<typeof vi.fn>;
     __sessionGetByName: ReturnType<typeof vi.fn>;
     __oauthClientGetByName: ReturnType<typeof vi.fn>;
     __oauthCodeGetByName: ReturnType<typeof vi.fn>;
@@ -304,5 +316,39 @@ describe("POST /s/:token/account", () => {
     });
     const res = await worker.fetch!(post({ accountId: ACCOUNT }), env);
     expect(res.status).toBe(409);
+  });
+});
+
+describe("GET /s/:token/audit", () => {
+  const TOKEN = "a".repeat(64);
+
+  it("returns the durable log the account holds", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(
+      new Request(`https://worker.local/s/${TOKEN}/audit`),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      rows: [
+        {
+          origin: "https://www.allbirds.com",
+          tool: "fill_checkout_on_allbirds_com",
+          fieldNames: ["address.line1"],
+          timestamp: 1,
+        },
+      ],
+    });
+    expect(env.__listHistory).toHaveBeenCalled();
+  });
+
+  it("does not accept a write", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(
+      new Request(`https://worker.local/s/${TOKEN}/audit`, { method: "POST" }),
+      env,
+    );
+    expect(res.status).toBe(404);
+    expect(env.__listHistory).not.toHaveBeenCalled();
   });
 });
