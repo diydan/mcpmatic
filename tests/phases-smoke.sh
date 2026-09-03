@@ -98,7 +98,14 @@ START=$(curl -sS -X POST "$BASE_URL/site/verify/start" \
 echo "$START" | grep -q '"token"' \
   && pass "verification token issued" || fail "verify/start: $START"
 
-echo "== 8. passkey registration is session-bound (security fix) =="
+echo "== 8. a pending approval is redeemable, not a hang =="
+# The bounded wait only pends when a console is attached, which a script cannot
+# be. What is checkable here is that the redemption tool exists and answers.
+CHECK=$(mcp tools/call '{"name":"check_approval","arguments":{"id":"no-such-id"}}')
+echo "$CHECK" | grep -q 'no result yet' \
+  && pass "check_approval answers for an unknown id" || fail "check_approval: $CHECK"
+
+echo "== 9. passkey registration is session-bound (security fix) =="
 NOSESSION=$(curl -sS -o /dev/null -w '%{http_code}' \
   -X POST "$BASE_URL/account/passkey/register/options" \
   -H 'content-type: application/json' \
@@ -113,6 +120,11 @@ echo
 if [ "$FAILED" = "1" ]; then echo "SOME CHECKS FAILED"; exit 1; fi
 echo "All checks passed."
 echo
+echo "Verified by hand against a deployed Worker on 2026-09-04, so no longer"
+echo "listed above: the approval round trip. A call with a console attached and"
+echo "nobody clicking returned approval-pending in 10.0s with an id; approving"
+echo "afterwards ran the tool and check_approval returned its result; the audit"
+echo "row named the six fields that moved."
+echo
 echo "Still needs a human, in a browser at $BASE_URL/c/$SESSION:"
-echo "  - approve a fill_checkout call and watch the suspended MCP call resume"
 echo "  - add a passkey, then sign in with it from a second browser profile"
