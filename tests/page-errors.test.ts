@@ -181,3 +181,37 @@ describe("console/network de-duplication", () => {
     expect(log.all()).toHaveLength(1);
   });
 });
+
+describe("defensive handling of malformed events", () => {
+  it("ignores a response whose status is not a finite number", () => {
+    const { page, fire } = fakePage();
+    const log = new PageErrorLog();
+    attachPageErrorCapture(page, log);
+    // undefined < 400 is false, so a bare range check would record this as
+    // an "HTTP undefined" row.
+    fire("response", { url: () => "https://example.com/a", status: () => undefined });
+    fire("response", { url: () => "https://example.com/b", status: () => NaN });
+    fire("response", { url: () => "https://example.com/c" });
+    expect(log.all()).toEqual([]);
+  });
+
+  it("still records a well-formed error response alongside them", () => {
+    const { page, fire } = fakePage();
+    const log = new PageErrorLog();
+    attachPageErrorCapture(page, log);
+    fire("response", { url: () => "https://example.com/a", status: () => undefined });
+    fire("response", { url: () => "https://example.com/b", status: () => 503 });
+    expect(log.all().map((e) => e.status)).toEqual([503]);
+  });
+});
+
+describe("buffered entries are not reachable through a read", () => {
+  it("copies each entry, not just the array", () => {
+    const log = new PageErrorLog();
+    log.record({ kind: "console", text: "original" });
+    const read = log.all();
+    read[0].text = "rewritten";
+    read[0].kind = "http";
+    expect(log.all()[0]).toMatchObject({ kind: "console", text: "original" });
+  });
+});

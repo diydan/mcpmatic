@@ -10,9 +10,14 @@
  *
  * Privacy. Unlike the audit table, which deliberately has no value column,
  * console text is written by the site and can quote anything the page had —
- * including something the operator typed. So this buffer is memory-only, per
- * session, never written to SQLite or KV, dies with the browser, and every
- * entry is truncated. It is a debugging aid, not a record.
+ * including something the operator typed. So this buffer is memory-only,
+ * never written to SQLite or KV, and every entry is truncated. It is a
+ * debugging aid, not a record.
+ *
+ * Lifecycle. The buffer belongs to the session, and a fresh browser launch
+ * clears it — otherwise the errors of a torn-down browser would be reported
+ * as the new one's. Entries stay readable after a browser closes, which is
+ * the point: the operator asks what went wrong *after* it went wrong.
  */
 
 export type PageErrorKind = "pageerror" | "console" | "requestfailed" | "http";
@@ -56,9 +61,13 @@ export class PageErrorLog {
     }
   }
 
-  /** Oldest first. Non-destructive: two readers (MCP and the page) both see it. */
+  /**
+   * Oldest first. Non-destructive: two readers (MCP and the page) both see it.
+   * Each entry is copied too — a shallow array copy still hands out the live
+   * objects, so a caller could rewrite a recorded error's text.
+   */
   all(): PageErrorEntry[] {
-    return [...this.entries];
+    return this.entries.map((e) => ({ ...e }));
   }
 
   get size(): number {
@@ -140,7 +149,10 @@ export function attachPageErrorCapture(page: PageEventSource, log: PageErrorLog)
       safe((res) => {
         const r = res as PageResponse;
         const status = typeof r.status === "function" ? r.status() : 0;
-        if (status < 400) return;
+        // A partial event whose status() gives undefined must not become an
+        // "HTTP undefined" row: undefined < 400 is false, so a bare range
+        // check lets it through.
+        if (!Number.isFinite(status) || status < 400) return;
         log.record({
           kind: "http",
           text: `HTTP ${status}`,

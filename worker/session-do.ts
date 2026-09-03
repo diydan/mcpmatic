@@ -94,6 +94,12 @@ export class SessionDO extends DurableObject<Env> {
    * design — see page-errors.ts on why this is not the audit table.
    */
   private pageErrors = new PageErrorLog();
+  /**
+   * Whether the live browser's page accepted the error subscriptions. False
+   * means an empty buffer proves nothing, so get_page_errors must not report
+   * a clean page.
+   */
+  private pageErrorsAttached = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -541,8 +547,24 @@ export class SessionDO extends DurableObject<Env> {
     if (name === "get_page_errors") {
       // Reports on the browser; never starts one, same rule as get_page_state.
       const entries = this.pageErrors.all();
-      if (!this.live && entries.length === 0) {
-        return { ok: true, text: "No remote browser yet, so nothing has been recorded." };
+      // An empty buffer means three different things, and reporting a clean
+      // page for any of the other two tells the operator the opposite of the
+      // truth — the failure mode this tool exists to close.
+      if (entries.length === 0) {
+        if (!this.live) {
+          return {
+            ok: true,
+            text: this.env.BROWSER
+              ? "No remote browser yet, so nothing has been recorded."
+              : "No Browser Rendering binding in this environment, so no page errors are captured.",
+          };
+        }
+        if (!this.pageErrorsAttached) {
+          return {
+            ok: true,
+            text: "This browser does not report page events, so no errors are being captured. An empty result here is not a clean page.",
+          };
+        }
       }
       return { ok: true, text: describePageErrors(entries) };
     }
@@ -814,7 +836,12 @@ export class SessionDO extends DurableObject<Env> {
       // Subscribe before the first navigation, or the errors of the page that
       // navigation loads are missed. A binding without page.on captures
       // nothing and says so through get_page_errors rather than failing here.
-      attachPageErrorCapture(page as PageEventSource, this.pageErrors);
+      // Clear first: this browser must not inherit a torn-down one's errors.
+      this.pageErrors.clear();
+      this.pageErrorsAttached = attachPageErrorCapture(
+        page as PageEventSource,
+        this.pageErrors,
+      );
       let cdp: CdpSession | null = null;
       try {
         cdp = wrapCdp(await page.context().newCDPSession(page));
