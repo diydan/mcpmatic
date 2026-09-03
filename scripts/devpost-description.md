@@ -1,7 +1,7 @@
-# WebMCP Challenge — Devpost entry text for MCPMatic
+# WebMCP Challenge — Devpost entry text for Browsermatic
 
 ## Project name
-MCPMatic
+Browsermatic
 
 ## Tagline
 Cross-origin WebMCP. One conversation. Names only.
@@ -10,7 +10,7 @@ Cross-origin WebMCP. One conversation. Names only.
 
 ## Project story (paste into "Please describe your project")
 
-Your AI agent is becoming a customer of the open web. Just as mobile-friendly sites won the last decade, AI-callable sites will win this one. MCPMatic is the session page that holds your consent and lets one agent shop, fill, and book across any site using each site's own WebMCP tools on your behalf.
+Your AI agent is becoming a customer of the open web. Just as mobile-friendly sites won the last decade, AI-callable sites will win this one. Browsermatic is the session page that holds your consent and lets one agent shop, fill, and book across any site using each site's own WebMCP tools on your behalf.
 
 **Why this is a strong fit for WebMCP**
 
@@ -42,7 +42,7 @@ Now, on one façade page:
 4. Grant Brooklinen. `search_catalog_on_brooklinen_com` joins the same tool list. Allbirds tools stay registered — one AbortController per tool, so granting a second origin cannot wipe the first.
 5. `fill_checkout_on_allbirds_com` asks the human to bless name and address fields before they cross the Worker. Payment is never submitted.
 
-Five years from now every site will have WebMCP. MCPMatic is what that future looks like from the user side: one chat, many sites, each site owning its own tools. The video above is the demo.
+Five years from now every site will have WebMCP. Browsermatic is what that future looks like from the user side: one chat, many sites, each site owning its own tools. The video above is the demo.
 
 People grant origins and bless fields. Agents call structured tools. The store still owns its handlers. That is WebMCP spanning the open web, not replacing it.
 
@@ -78,7 +78,7 @@ First commit 2026-08-31. MIT licensed. Hosted on Cloudflare Workers. Live URL, p
 
 ## What is next (paste into "What is next")
 
-Beyond the user session, the same primitives enable a developer platform: hosted WebMCP tool registration, call analytics, error tracking, and a public directory of agent-callable sites. Today, merchants self-host their `registerTool` scripts; tomorrow, MCPMatic can host, observe, and certify them. The architecture that makes a user's audit row cannot store a value is the same architecture that makes a site's tool surface auditable from the outside.
+Beyond the user session, the same primitives enable a developer platform: hosted WebMCP tool registration, call analytics, error tracking, and a public directory of agent-callable sites. Today, merchants self-host their `registerTool` scripts; tomorrow, Browsermatic can host, observe, and certify them. The architecture that makes a user's audit row cannot store a value is the same architecture that makes a site's tool surface auditable from the outside.
 
 ---
 
@@ -92,10 +92,16 @@ PREFERRED — ChatGPT desktop
    workspaces have no site tools.
 2. Open https://mcpmatic.dan-3c7.workers.dev in the in-app browser.
 3. Type https://www.allbirds.com and click Go.
-4. You land on /s/<token> with Allbirds already granted. The chips
-   search_catalog_on_allbirds_com, update_cart_on_allbirds_com,
-   proceed_to_checkout_on_allbirds_com, fill_checkout_on_allbirds_com
-   should appear.
+4. You land on /c/<token> — the console — with Allbirds already
+   granted. The chips search_catalog_on_allbirds_com,
+   update_cart_on_allbirds_com, proceed_to_checkout_on_allbirds_com,
+   fill_checkout_on_allbirds_com should appear.
+
+   One session has two views. /c/<token> is the console, which a human
+   opens: it holds the profile and is the only view that can approve a
+   field leaving your machine. /s/<token> is the façade, which an agent
+   loads; it registers the same tools and holds no profile. Both work
+   in ChatGPT's in-app browser.
 5. Ask: "Search Allbirds for wool runners."
    ChatGPT should call search_catalog_on_allbirds_com. The in-page
    panel will also show the call. Expect real catalog results.
@@ -103,6 +109,9 @@ PREFERRED — ChatGPT desktop
    the Allbirds tools.
 7. Optional: ask to fill checkout. A bless dialog lists the profile
    field names (not values). Deny or Bless. Payment is never submitted.
+   Driving /mcp instead, with no console open, returns "needs-console"
+   rather than filling blanks and claiming success — that is deliberate,
+   not a broken tool.
 
 FALLBACK — Chrome
 chrome://flags/#enable-webmcp-testing → enable → restart.
@@ -130,7 +139,7 @@ Clip 1 — 0:00–0:30. Home page → Allbirds session. Voice: "Your AI agent is
 Clip 2 — 0:30–1:00. Grant Brooklinen. Both stores' chips in one list. Voice: "One conversation, many origins, each site owns its tools."
 Clip 3 — 1:00–1:45. One message, two stores. "Find wool runners in size 9 on both stores." Cut to results.
 Clip 4 — 1:45–2:15. Audit row close-up. Hold on the row. Cursor off the row to show what is not there: no value column.
-Clip 5 — 2:15–2:45. Close. "MCPMatic: cross-origin WebMCP, one conversation, names only."
+Clip 5 — 2:15–2:45. Close. "Browsermatic: cross-origin WebMCP, one conversation, names only."
 
 Total: 2:45. Audio covers everything on screen. No music. No title card.
 

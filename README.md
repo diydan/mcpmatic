@@ -1,4 +1,4 @@
-# browsermatic
+# Browsermatic
 
 A WebMCP session that spans origins.
 
