@@ -70,25 +70,43 @@ invocation inside any ChatGPT request/response cycle, period. The
 automatic trigger fires a background task and returns; it does not make a
 tool call wait on a model.
 
-## Capture: accessibility tree over the existing CDP session
+## Capture: walk the DOM through the existing `evaluate` path
 
-`worker/cdp.ts` already exposes `CdpSession.send(method, params)` as a
-generic passthrough, used today for `Page.*` (screencast) and `Input.*`
-(mouse/keyboard) commands. Add `worker/accessibility.ts` with
-`captureAxTree(cdp: CdpSession)`:
+**Revised from the first draft of this spec**, which proposed a second CDP
+domain (`Accessibility.getFullAXTree`). That tree identifies nodes by
+`backendDOMNodeId`, which then needs a *separate* correlation step (the
+`DOM` domain) to turn back into something with a real CSS selector — a
+second CDP surface this codebase doesn't otherwise touch, for a step
+generation doesn't strictly need the accessibility semantics of. The
+codebase already has a simpler, proven path for reading page structure:
+`page.evaluate`, used today by `discoverNativeTools`/`callNativeTool`
+(`worker/native-webmcp.ts`) to read `document.modelContext` out of the
+remote page. Capture reuses exactly that mechanism instead.
 
-```
-Accessibility.enable
-Accessibility.getFullAXTree
-```
+Add `worker/dom-capture.ts`, `captureInteractiveElements(evaluate:
+EvaluateFn): Promise<PageElement[]>` — same `EvaluateFn` type
+`native-webmcp.ts` already exports, so it's wired into `session-do.ts` the
+same way `callNativeTool`/`discoverNativeTools` already are:
+`live.page.evaluate.bind(live.page)`. Serialized into the remote page (same
+"do not close over worker state" constraint `native-webmcp.ts`'s own
+`nativeCall`/`nativeList` document), the in-page function:
 
-returning a pruned tree: role, accessible name, and a CSS-path hint per
-node (derived the same way Chrome DevTools derives one — nth-child walk
-to a stable ancestor — good enough for step generation, not claimed to be
-stable across a redeploy of the target site). Same module shape as
-`startScreencast`/`dispatchMouse`: takes a `CdpSession`, no worker `Env`,
-so it unit-tests the same way `cdp.test.ts` mocks `send`/`on` with
-`vi.fn()`.
+- Selects `button, a, input, select, textarea, [role], form`.
+- For each: `role` from an explicit `role` attribute, else a tag-based
+  default (`button` → "button", `a` → "link", `input[type=submit]` →
+  "button", `input` → "textbox", `select` → "combobox", `form` → "form").
+- `name` from `aria-label`, else an associated `<label>`'s text, else
+  `textContent` (trimmed), else `placeholder`, else `value`.
+- `selector`: an nth-child walk up to the nearest ancestor with an `id`
+  (or `document.body`) — the same technique Chrome DevTools uses for "Copy
+  selector," computed in-page where the real DOM is, not reconstructed
+  from an abstracted tree afterward. Good enough for step generation; not
+  claimed to be stable across a redeploy of the target site — same caveat
+  the first draft carried, now attached to the mechanism that actually
+  produces the selector.
+- Capped to the first 150 elements, mirroring the 8000-character cap
+  `sanitizeSchema` already applies in `native-webmcp.ts` — bounding what
+  reaches the model, not just what a tool declares.
 
 ## Synthesis: reuse the existing model path
 
@@ -98,7 +116,7 @@ so it unit-tests the same way `cdp.test.ts` mocks `send`/`on` with
 secret.
 
 Add `worker/generate-manifest.ts`, `generateManifest(env: ModelEnv,
-origin: string, axTree: AxNode): Promise<GenerateOutcome>`:
+origin: string, elements: PageElement[]): Promise<GenerateOutcome>`:
 
 - Prompts the model for `ToolManifest[]` shaped exactly like
   `shared/manifest.ts`'s type — the same `goto`/`fill`/`click`/`press`/`wait`
@@ -195,11 +213,11 @@ model invoked at call time.
 
 Same mocking conventions already in `tests/`:
 
-- `worker/accessibility.ts` — like `tests/cdp.test.ts`, mock
-  `CdpSession` as `{ send: vi.fn(), on: vi.fn() }`; assert the exact
-  `Accessibility.enable` / `Accessibility.getFullAXTree` call sequence and
-  that a malformed/empty tree produces an empty node list rather than
-  throwing.
+- `worker/dom-capture.ts` — like `tests/native-webmcp.test.ts` mocks
+  `EvaluateFn`, mock `evaluate` with `vi.fn()` returning fixture element
+  lists; assert the 150-element cap and that an `evaluate` throw (page
+  navigated mid-call, closed) returns an empty list rather than throwing
+  out of `captureInteractiveElements`.
 - `worker/generate-manifest.ts` — like `tests/agent.test.ts`, mock
   `env.AI.run` with `vi.fn()` returning fixture completions: a valid
   manifest (parses, stored as draft), a response with an illegal step
