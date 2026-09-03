@@ -378,15 +378,39 @@ Same conventions as `tests/`:
 - **B — account.** `AccountDO`, passkey login, durable consent, audit rows
   relocated.
 
-  **A session is claimed, not replaced.** The console, once it holds a passkey
-  assertion, POSTs its session token to `/account/claim`; the `AccountDO`
-  records the session and the `SessionDO` records the account id. From then on
-  `grantConsent` writes through to the account, and new sessions are minted
-  *by* the account and read its grants at `initSession`. Unclaimed sessions
-  keep working exactly as today — a capability URL with no account behind it is
-  still a working two-hour session. That is what keeps "no login, no key, no
-  install" true while giving consent somewhere durable to live for people who
-  want it. Closes the durability half of P1.3.
+  **A session is claimed, not replaced.** The console POSTs its account id to
+  `POST /s/<token>/account`; the `AccountDO` records the session and returns
+  the union of its grants and the session's, and the `SessionDO` records the
+  account id. From then on `grantConsent` writes through to the account.
+  Unclaimed sessions keep working exactly as today — a capability URL with no
+  account behind it is still a working two-hour session. That is what keeps
+  "no login, no key, no install" true while giving consent somewhere durable
+  to live for people who want it.
+
+  **Built, with two deliberate departures from the paragraph above.**
+
+  The route is `POST /s/<token>/account`, not `/account/claim`: it matches the
+  existing `/s/<token>/consent`, and keeps the session token out of a request
+  body.
+
+  Identity is not a passkey. The account id is 256 bits the console generates
+  and keeps in `localStorage` — a bearer credential of the same class as the
+  session token in the URL, on the same trust footing the product already
+  accepts. That buys durable consent with no auth system at all, which is what
+  "no login" is worth protecting. What it does not survive is cleared storage
+  or a second device; binding the account to an authenticator is what fixes
+  that, and it is **not built**.
+
+  **Consent is mirrored, not read through.** `readConsent()` is synchronous and
+  sits in hot paths (`consented()`, the `state` message); making it await a
+  second Durable Object would ripple through the class for no gain. So the
+  session keeps its local list as the read path and the account is the durable
+  source that repopulates a *new* session. `grantConsent` writes both, the
+  account write via `waitUntil` so consent still answers without waiting on a
+  second DO.
+
+  **Still open in this phase:** the audit rows have not moved to the account.
+  They still die with the session, which Phase C needs them not to. Closes the durability half of P1.3.
 - **C — telemetry.** Read path and origin ownership proof.
 
 A and B are independent — A is first because it fixes a live bug, not because
