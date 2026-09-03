@@ -6,7 +6,7 @@ import {
 } from "../lib/passkey-client";
 
 type Props = {
-  accountId: string | null;
+  sessionToken: string;
   onSignedIn: (accountId: string) => void;
 };
 
@@ -15,7 +15,7 @@ type Props = {
  * device or after storage is cleared; without one, the grants live and die
  * with this browser's localStorage.
  */
-export function PasskeyBar({ accountId, onSignedIn }: Props) {
+export function PasskeyBar({ sessionToken, onSignedIn }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -34,11 +34,11 @@ export function PasskeyBar({ accountId, onSignedIn }: Props) {
     <div className="passkey">
       <button
         type="button"
-        disabled={busy || !accountId}
+        disabled={busy || !sessionToken}
         onClick={() =>
           void run(async () => {
-            if (!accountId) return;
-            const result = await registerPasskey(accountId);
+            if (!sessionToken) return;
+            const result = await registerPasskey(sessionToken);
             setStatus(
               result.ok
                 ? "passkey added — this account now works on another device"

@@ -217,6 +217,19 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /**
+   * The account this session was claimed by, for the passkey registration
+   * route only.
+   *
+   * Server-side callers only: the worker uses it to decide which account an
+   * authenticator may be attached to, and never returns it to a client. That
+   * is the whole point — registration must prove possession of the session,
+   * not merely knowledge of an account id.
+   */
+  async accountForPasskey(): Promise<{ accountId: string | null }> {
+    return { accountId: this.accountId() };
+  }
+
+  /**
    * Bind this session to an account, inheriting its grants.
    *
    * Claimed, not replaced: the session keeps its token, its browser and
