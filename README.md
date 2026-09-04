@@ -1,5 +1,7 @@
 # BrowserMatic
 
+**Status:** Public beta. See [SECURITY.md](./SECURITY.md) for disclosure.
+
 **Every site's own tools. One conversation. Names only.**
 
 Ask an assistant to compare four stores, book dinner and a film, price a trip,
@@ -200,4 +202,10 @@ Façade headers (`public/_headers`): `Origin-Agent-Cluster: ?1`,
   against the MCP SDK; individual MCP clients are listed in
   `tests/MCP_CLIENTS.md`.
 
-Design decisions are recorded in the commit history and in `docs/`.
+Design notes live in commits and tests.
+
+## See also
+
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — setup, testing, PR conventions.
+- [`SECURITY.md`](./SECURITY.md) — how to report a vulnerability.
+- [`LICENSE`](./LICENSE) — MIT.
