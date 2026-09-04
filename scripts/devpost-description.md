@@ -26,7 +26,7 @@ WebMCP is the load-bearing API, not a badge. Abort the registration signal and b
 
 **What is better for the user**
 
-One conversation, many origins. Grant Allbirds and the store's own catalog tool appears. Grant Kayak in the same session and a synthesised flight search appears next to it. The human watches the remote page in a live viewport, blesses any profile fields before they leave the device, and can take the keyboard at any moment.
+One conversation, many origins. Open Allbirds and the store's own catalog tools appear; Kayak's synthesised flight search sits in the same list, in the same session. The human watches the remote page in a live viewport, approves any profile fields before they leave the device, and can take the keyboard at any moment.
 
 The profile is never uploaded wholesale. Only declared paths resolve (`fillsFrom: ["address.postcode"]` is that key). The audit table has no value column — names, origin, timestamp. "We don't log it" is a policy; "there is nowhere to log it" is the architecture.
 
@@ -40,11 +40,11 @@ Now, on one façade page:
 2. Allbirds is pre-granted. `search_catalog_on_allbirds_com` is a real `document.modelContext.registerTool` on the page ChatGPT loaded.
 3. Ask: "Search Allbirds for wool runners." The execute handler proxies into the storefront's own `search_catalog`. Real catalog results: Men's and Women's Wool Runners at $110, availability included.
 4. Grant Brooklinen. `search_catalog_on_brooklinen_com` joins the same tool list. Allbirds tools stay registered — one AbortController per tool, so granting a second origin cannot wipe the first.
-5. `fill_checkout_on_allbirds_com` asks the human to bless name and address fields before they cross the Worker. Payment is never submitted.
+5. `fill_checkout_on_allbirds_com` asks the human to approve name and address fields before they cross the Worker. Payment is never submitted.
 
 Five years from now every site will have WebMCP. BrowserMatic is what that future looks like from the user side: one chat, many sites, each site owning its own tools. The video above is the demo.
 
-People grant origins and bless fields. Agents call structured tools. The store still owns its handlers. That is WebMCP spanning the open web, not replacing it.
+People and agents work the same page at once. The agent calls the site's structured tools while you watch the live viewport, take the keyboard whenever you want, and approve any profile field by name before it leaves your machine — mid-flight, without stopping the conversation. The store still owns its handlers throughout. That is WebMCP spanning the open web, not replacing it.
 
 **How we implemented WebMCP**
 
@@ -56,7 +56,7 @@ await document.modelContext.registerTool(
     name: spec.name,          // e.g. search_catalog_on_allbirds_com
     description: spec.description,
     inputSchema: spec.inputSchema,
-    execute: wrap(spec),      // bless → WebSocket → Durable Object → remote page
+    execute: wrap(spec),      // approve → WebSocket → Durable Object → remote page
   },
   { signal: ac.signal },      // one AbortController per tool
 );
@@ -107,10 +107,12 @@ PREFERRED — ChatGPT desktop
 5. Ask: "Search Allbirds for wool runners."
    ChatGPT should call search_catalog_on_allbirds_com. The in-page
    panel will also show the call. Expect real catalog results.
-6. Click grant on Kayak. search_flights_on_kayak_com appears next to
-   the Allbirds tools.
-7. Optional: ask to fill checkout. A bless dialog lists the profile
-   field names (not values). Deny or Bless. Payment is never submitted.
+6. Every catalog site is callable already — automation is the default,
+   so search_flights_on_kayak_com sits in the same list. Toggle
+   Autonomous off in the console to grant each site by hand instead.
+7. Optional: ask to fill checkout. An approval dialog lists the
+   profile field names — never the values. Deny or Approve. Payment is
+   never submitted.
    Driving /mcp instead, with no console open, returns "needs-console"
    rather than filling blanks and claiming success — that is deliberate,
    not a broken tool.
@@ -152,7 +154,7 @@ Total: 2:45. Audio covers everything on screen. No music. No title card.
 1. Home page (this session's first screenshot — the dark theme card grid).
 2. Session after Allbirds grant — chips, viewport, audit row.
 3. Same session after granting Brooklinen — both stores' chips, dual origin.
-4. GOV.UK bless dialog (this session's screenshot).
+4. The approval dialog, listing field names only.
 5. Audit row close-up.
 
 Do NOT upload the Playwright QA shots in scripts/qa-screenshots/. They were taken without Browser Rendering and say "no browser binding."
