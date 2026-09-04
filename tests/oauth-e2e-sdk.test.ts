@@ -1,7 +1,7 @@
 /**
  * @vitest-environment node
  *
- * End-to-end OAuth flow + real MCP SDK client (Phase 1.5).
+ * End-to-end OAuth flow + real MCP SDK client.
  *
  * The sibling `oauth-e2e.test.ts` walks register → authorize → token → mcp
  * entirely through direct handler calls. This file proves the same surface

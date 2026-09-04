@@ -1,7 +1,7 @@
 /**
  * @vitest-environment node
  *
- * End-to-end OAuth flow integration test (Phase 1.5).
+ * End-to-end OAuth flow integration test.
  *
  * Walks the full sequence a real MCP client would walk:
  *

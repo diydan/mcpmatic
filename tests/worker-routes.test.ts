@@ -389,7 +389,7 @@ describe("DELETE /s/:token/consent", () => {
   });
 });
 
-describe("consent routes — session expiry (P1.2)", () => {
+describe("consent routes — session expiry", () => {
   const TOKEN = "a".repeat(64);
   const expiredErr = new Error("session expired");
 
