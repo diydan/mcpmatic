@@ -592,6 +592,17 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
     expect(putKeys).toContain(`token:${body.access_token}`);
     expect(putKeys).toContain(`refresh:${body.refresh_token}`);
 
+    // TTLs unchanged across the delete-before-write move: access 1h,
+    // refresh 30d. The `Promise.all` rewrite carried these verbatim.
+    const tokenPut = shim.kv.put.mock.calls.find(
+      (c) => (c[0] as string) === `token:${body.access_token}`,
+    )!;
+    const refreshPut = shim.kv.put.mock.calls.find(
+      (c) => (c[0] as string) === `refresh:${body.refresh_token}`,
+    )!;
+    expect((tokenPut[2] as { expirationTtl: number }).expirationTtl).toBe(3600);
+    expect((refreshPut[2] as { expirationTtl: number }).expirationTtl).toBe(60 * 60 * 24 * 30);
+
     // The new stored token carries the original userSessionToken + scope
     // — refreshing does not require a fresh consent round-trip.
     const newStored = JSON.parse(
@@ -688,6 +699,139 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("invalid_request");
     expect(shim.kv.put).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------
+  // refresh_token rotation ordering — H3-agent (2026-09-04 review)
+  // -------------------------------------------------------------
+
+  it("refresh rotation: delete is the linearization point — delete-before-write (H3-agent)", async () => {
+    // H3-agent: the previous code wrote the new pair FIRST and only THEN
+    // deleted the old refresh key. A worker crash between those two writes
+    // left two valid refresh tokens indefinitely (the "double-rotation"
+    // vulnerability). The fix deletes the old key first; if the new writes
+    // crash, the user simply re-authenticates.
+    //
+    // This test stubs `kv.delete` to throw (simulating a partial-failure
+    // crash) and asserts that NO new writes are committed — proving the
+    // delete-before-write ordering. If the puts ran first (the bug), the
+    // store would still contain orphan new keys.
+    const oldRt = "old-refresh-token-partial-failure-xxxxxxxxxxxxxxx";
+    const oldTok: AccessToken = {
+      token: "old-access-token-partial-failure-yyyyyyyyyyyyyyyyyy",
+      clientId: clientFixture.clientId,
+      userSessionToken: SESSION_TOKEN,
+      scope: "mcp:tools",
+      expiresAt: Date.now() + 60 * 1000,
+      refreshToken: oldRt,
+    };
+    shim.kv.store.set(`refresh:${oldRt}`, JSON.stringify(oldTok));
+
+    // Track the order of KV operations to prove the ordering.
+    const order: string[] = [];
+
+    shim.kv.delete.mockImplementation(async (key: string) => {
+      order.push(`delete:${key}`);
+      shim.kv.store.delete(key);
+      throw new Error("KV delete failed (simulated partial failure)");
+    });
+    shim.kv.put.mockImplementation(async (key: string, value: string) => {
+      order.push(`put:${key}`);
+      shim.kv.store.set(key, value);
+    });
+
+    const res = await handleToken(
+      tokenReq({
+        grant_type: "refresh_token",
+        refresh_token: oldRt,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
+      }),
+      shim.env,
+    );
+
+    // Critical: no puts should have been committed — delete-before-write
+    // means a delete failure short-circuits the rotation, with no orphan
+    // new keys left in the store. The old bug would have committed both
+    // puts before the delete threw, leaving two orphan valid refresh
+    // tokens in the store.
+    const putCalls = order.filter((c) => c.startsWith("put:"));
+    expect(putCalls).toEqual([]);
+
+    // delete was attempted (it's the linearization point). With the new
+    // code it runs BEFORE any put; with the old code it would have run
+    // AFTER, which is exactly the bug this test catches.
+    const deleteCalls = order.filter((c) => c.startsWith("delete:"));
+    expect(deleteCalls).toEqual([`delete:refresh:${oldRt}`]);
+
+    // Graceful failure: the `try/catch` around `kv.delete` must convert
+    // the throw into a `jsonError("server_error", 500)`. If the catch is
+    // ever removed, the throw escapes and the runtime 500s with no
+    // `Cache-Control: no-store` and no RFC-shape body — these three
+    // assertions below pin the catch wired up correctly.
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "server_error" });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("refresh rotation: delete-then-write — delete is the FIRST KV op on a clean run (H3-agent)", async () => {
+    // Sibling assertion to the partial-failure test above: even on a
+    // CLEAN refresh (no KV errors), the delete of the old refresh key
+    // must happen BEFORE the two puts of the new pair. If delete were
+    // last (the old order), a worker crash between the puts and the
+    // delete would leave the old refresh key still valid alongside the
+    // newly minted one.
+    const oldRt = "old-refresh-token-ordering-check-xxxxxxxxxxxxxxxx";
+    const oldTok: AccessToken = {
+      token: "old-access-token-ordering-check-yyyyyyyyyyyyyyyyyy",
+      clientId: clientFixture.clientId,
+      userSessionToken: SESSION_TOKEN,
+      scope: "mcp:tools",
+      expiresAt: Date.now() + 60 * 1000,
+      refreshToken: oldRt,
+    };
+    shim.kv.store.set(`refresh:${oldRt}`, JSON.stringify(oldTok));
+
+    // Track the order of KV operations to prove the ordering.
+    const order: string[] = [];
+    const originalPut = shim.kv.put.getMockImplementation();
+    const originalDelete = shim.kv.delete.getMockImplementation();
+    shim.kv.put.mockImplementation(async (key: string, value: string, opts?: unknown) => {
+      order.push(`put:${key}`);
+      if (originalPut) await originalPut(key, value, opts as { expirationTtl?: number });
+    });
+    shim.kv.delete.mockImplementation(async (key: string) => {
+      order.push(`delete:${key}`);
+      if (originalDelete) await originalDelete(key);
+    });
+
+    const res = await handleToken(
+      tokenReq({
+        grant_type: "refresh_token",
+        refresh_token: oldRt,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
+      }),
+      shim.env,
+    );
+
+    expect(res.status).toBe(200);
+
+    // Find the indices of the delete and the first put.
+    const deleteIdx = order.findIndex((c) => c.startsWith("delete:"));
+    const firstPutIdx = order.findIndex((c) => c.startsWith("put:"));
+
+    // delete was called exactly once (the old key) and at least one put
+    // happened (the new pair).
+    expect(deleteIdx).toBeGreaterThanOrEqual(0);
+    expect(firstPutIdx).toBeGreaterThanOrEqual(0);
+
+    // delete must precede every put — the bug being fixed was that puts
+    // ran before the delete.
+    expect(deleteIdx).toBeLessThan(firstPutIdx);
+
+    // The delete targeted the OLD refresh key (specifically `refresh:` prefix).
+    expect(order[deleteIdx]).toBe(`delete:refresh:${oldRt}`);
   });
 
   // -------------------------------------------------------------
