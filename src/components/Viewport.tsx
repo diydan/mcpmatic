@@ -149,7 +149,7 @@ export function Viewport({ jpeg, driving, browser, onInput }: Props) {
         ) : null}
       </div>
       <p className="viewport__warn">
-        🔒 Private and secure: information entered here is communicated directly with the website and is never stored.
+        🔒 What you type here goes straight through to the website and is never stored — not by us, not in the audit log.
       </p>
     </section>
   );

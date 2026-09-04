@@ -114,3 +114,29 @@ export function canonicalOrigin(
   }
   return normalised;
 }
+
+/**
+ * Origins as a person would say them: hostname, no scheme, no `www.`
+ *
+ * Deduped *after* stripping, which is the whole point. `https://kayak.com` and
+ * `https://www.kayak.com` are different origins and consent keys on that
+ * difference — but they are one name on screen, and listing it twice reads as
+ * a bug to everyone who sees it.
+ */
+export function displayHosts(origins: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const origin of origins) {
+    if (!origin) continue;
+    let host = origin;
+    try {
+      host = new URL(origin).hostname.replace(/^www\./, "");
+    } catch {
+      /* not a url: show what we were given rather than dropping it */
+    }
+    if (seen.has(host)) continue;
+    seen.add(host);
+    out.push(host);
+  }
+  return out;
+}

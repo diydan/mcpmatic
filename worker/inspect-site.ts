@@ -19,6 +19,22 @@ export type PageInspection = {
   interactiveCount: number;
 };
 
+/**
+ * The DOM surface this needs, declared structurally.
+ *
+ * The Worker has no DOM lib and should not pull one in for code whose only
+ * job is to be serialized into a page. Same approach `native-webmcp.ts` takes
+ * with `document.modelContext`.
+ */
+type El = {
+  getAttribute: (name: string) => string | null;
+  hasAttribute: (name: string) => boolean;
+  querySelectorAll: (selector: string) => ArrayLike<El>;
+  textContent: string | null;
+  tagName: string;
+};
+type Doc = { querySelectorAll: (selector: string) => ArrayLike<El> };
+
 /** A page is remote input; every list it produces is bounded. */
 export const MAX_FORMS = 20;
 export const MAX_FIELDS = 30;
@@ -34,9 +50,13 @@ export const MAX_SEARCH_INPUTS = 10;
  * already tool schemas; then loose search inputs, which are a guess.
  */
 export function collectInspection(): PageInspection {
-  const doc = globalThis.document;
+  const g = globalThis as unknown as {
+    document?: Doc;
+    location?: { href?: string };
+  };
+  const doc = g.document;
   const out: PageInspection = {
-    url: globalThis.location?.href ?? "",
+    url: g.location?.href ?? "",
     searchActions: [],
     forms: [],
     searchInputs: [],

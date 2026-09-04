@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Header } from "../components/Header";
 import { ThemeToggle } from "../components/ThemeToggle";
-import { STORES } from "../../shared/stores";
 import { getRecentSites, recordRecentSite, type RecentSite } from "../lib/recent-sites";
 
 export function Home() {
