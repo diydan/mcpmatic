@@ -176,8 +176,9 @@ started on the first grant and released when you leave.
 
 Two models. A small one answers each turn; if it produces arguments the
 tool's own schema rejects, the larger one gets one retry at the same turn.
-Chaining turns start on the larger one. Set `MODEL_EASY` and `MODEL_HARD`,
-or `OPENAI_MODEL` to pin a single model for every turn.
+Chaining turns start on the larger one. Both default to `openai/gpt-5.5`, so
+escalation is inert until `MODEL_HARD` names a bigger model. `OPENAI_MODEL`
+pins a single model for every turn.
 
 No API key is required. The optional in-page chat panel reaches a model through
 the Cloudflare `ai` binding; drop that binding and set `OPENAI_API_KEY` to call

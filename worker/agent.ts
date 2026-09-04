@@ -67,9 +67,15 @@ export type ModelEnv = {
  *
  * Structural signals only. Sniffing tool output for the word "failed" would
  * bind model choice to error prose, which changes.
+ *
+ * Both default to the same id because it is the one verified to resolve
+ * through this account's AI Gateway. `openai/gpt-5.6-luna` and
+ * `openai/gpt-5.6-sol` both return `7003: User Input Error`: Sol, Terra and
+ * Luna are ChatGPT client tiers, not API models. Point `MODEL_HARD` at a
+ * larger model that does resolve and the escalation below starts working.
  */
-const DEFAULT_EASY = "openai/gpt-5.6-luna";
-const DEFAULT_HARD = "openai/gpt-5.6-sol";
+const DEFAULT_EASY = "openai/gpt-5.5";
+const DEFAULT_HARD = "openai/gpt-5.5";
 /** Chaining begins once this many tool results are already in the transcript. */
 const CHAINING_AFTER = 2;
 

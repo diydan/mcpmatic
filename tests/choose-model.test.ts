@@ -56,9 +56,12 @@ describe("chooseModel", () => {
     ).toBe("pinned");
   });
 
-  it("falls back to the shipped defaults when nothing is set", () => {
-    expect(chooseModel({}, flat, firstTurn)).toBe("openai/gpt-5.6-luna");
-    expect(chooseModel({}, flat, afterTwoTools)).toBe("openai/gpt-5.6-sol");
+  it("falls back to the shipped default, the id verified to resolve", () => {
+    // openai/gpt-5.6-luna and -sol both return 7003 through AI Gateway: Sol,
+    // Terra and Luna are ChatGPT client tiers, not API models. Until
+    // MODEL_HARD names a bigger model that resolves, both paths are the same.
+    expect(chooseModel({}, flat, firstTurn)).toBe("openai/gpt-5.5");
+    expect(chooseModel({}, flat, afterTwoTools)).toBe("openai/gpt-5.5");
   });
 
   it("does not choke on a schema it cannot read", () => {
