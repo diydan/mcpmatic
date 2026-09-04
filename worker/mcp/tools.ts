@@ -33,6 +33,19 @@ const SPINE: McpToolDescriptor[] = [
     },
   },
   {
+    name: "check_approval",
+    description:
+      "Collect the result of a tool call that returned approval-pending. Pass the id from that reply.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The id from an approval-pending reply" },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "get_page_errors",
     description:
       "Errors the open page itself reported this session: uncaught exceptions, console errors and warnings, failed requests, and 4xx/5xx responses. A replayed step that quietly did nothing usually left a trace here.",
@@ -47,10 +60,20 @@ export const SPINE_NAMES = SPINE.map((t) => t.name);
  * manifests are included only for granted origins — ungranted origins are
  * invisible, not "denied at call time."
  */
+/**
+ * A tool that draws on the local profile cannot run unattended: the profile
+ * lives in the console's localStorage, never on the server. Say so in the
+ * description so a planning client knows the cost before it calls, rather
+ * than discovering it in an error.
+ */
+export const APPROVAL_NOTE = "Requires human approval in the BrowserMatic console.";
+
 function toDescriptor(m: ToolManifest): McpToolDescriptor {
   return {
     name: m.name,
-    description: m.description,
+    description: m.fillsFrom?.length
+      ? `${m.description} ${APPROVAL_NOTE}`
+      : m.description,
     inputSchema: m.inputSchema as unknown as Record<string, unknown>,
   };
 }

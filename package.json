@@ -1,10 +1,10 @@
 {
-  "name": "mcpmatic",
+  "name": "browsermatic",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "description": "WebMCP façade: personalization without surveillance. Tools for sites that have none.",
+  "description": "BrowserMatic: a WebMCP session page that spans origins. Cross-origin in one conversation. Audit by names only.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -23,6 +23,8 @@
   },
   "dependencies": {
     "@cloudflare/playwright": "^1.3.6",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",

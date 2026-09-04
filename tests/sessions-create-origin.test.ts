@@ -47,6 +47,8 @@ vi.mock("../worker/session-do", () => ({
     }
   },
 }));
+vi.mock("../worker/account-do", () => ({ AccountDO: class AccountDO {} }));
+vi.mock("../worker/site-do", () => ({ SiteDO: class SiteDO {} }));
 
 // Pull the mocked handles AFTER the mocks are registered.
 import { isPrivateUrl } from "../worker/is-private-url";
@@ -105,6 +107,23 @@ describe("POST /sessions — back-compat (no body)", () => {
     // (Home.tsx today) rely on this — no consent gets seeded.
     expect(initSession).toHaveBeenCalledTimes(1);
     expect(initSession).toHaveBeenCalledWith(body.sessionToken, undefined);
+  });
+
+  it("returns the console url alongside the façade url", async () => {
+    // `url` is what an agent loads. A human needs /c/<token>: it is the only
+    // view that can answer an approval.
+    const { env } = makeEnv();
+    const res = await worker.fetch!(
+      req("https://worker.local/sessions", { method: "POST" }),
+      env,
+    );
+    const body = (await res.json()) as {
+      sessionToken: string;
+      url: string;
+      consoleUrl: string;
+    };
+    expect(body.url).toBe(`https://worker.local/s/${body.sessionToken}`);
+    expect(body.consoleUrl).toBe(`https://worker.local/c/${body.sessionToken}`);
   });
 
   it("application/json body with empty object {} → 200, initSession(token) without origin", async () => {

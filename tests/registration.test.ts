@@ -172,6 +172,26 @@ describe("execute refuses loudly", () => {
     });
   });
 
+  it("sends no fields when no profile reader is supplied", async () => {
+    // The façade at /s/<token> is loaded by an agent and holds no profile. A
+    // fillsFrom tool still registers and still runs; the fields are supplied
+    // later by the console, through the DO's approval. Prompting here would
+    // put the dialog in an automated browser.
+    const { registration, executeRemote, bless } = harness({
+      bless: undefined,
+      resolveFields: undefined,
+    });
+    const mc = ensureModelContext();
+    await registration.sync(new Set([ALLBIRDS]));
+
+    const tool = (await mc.getTools()).find(
+      (t) => t.name === "fill_checkout_on_allbirds_com",
+    );
+    await mc.executeTool(tool!, {});
+    expect(bless).not.toHaveBeenCalled();
+    expect(executeRemote).toHaveBeenCalledWith("fill_checkout_on_allbirds_com", {});
+  });
+
   it("registers observed remote tools origin-qualified without colliding with a manifest", async () => {
     const mc = ensureModelContext();
     const { registration, executeRemote } = harness();
