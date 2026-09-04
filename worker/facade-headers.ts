@@ -15,4 +15,28 @@ export const FACADE_HEADERS: Record<string, string> = {
   "Permissions-Policy": "tools=*",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
+  // Content-Security-Policy: per the 2026-09-04 review (M5). `'self'` for
+  // scripts and styles; `'wasm-unsafe-eval'` for the WASM that Vite ships
+  // for the in-browser agent; `connect-src 'self' wss:` so the bridge
+  // socket works; `img-src https: data:` because the screencast is data:
+  // and tool thumbnails use https; `frame-ancestors 'none'` to defeat
+  // clickjacking. No `'unsafe-inline'` *anywhere* — the React build
+  // already has no inline scripts.
+  "Content-Security-Policy":
+    "default-src 'self'; " +
+    "script-src 'self' 'wasm-unsafe-eval'; " +
+    "style-src 'self'; " +
+    "img-src 'self' https: data:; " +
+    "connect-src 'self' wss: https:; " +
+    "font-src 'self'; " +
+    "object-src 'none'; " +
+    "base-uri 'none'; " +
+    "form-action 'self'; " +
+    "frame-ancestors 'none'",
+  // Defence in depth: even if a future browser ignores `frame-ancestors`,
+  // the legacy header denies framing.
+  "X-Frame-Options": "DENY",
+  // HSTS: the worker is HTTPS-only by deployment; declaring the year-long
+  // intent is cheap and removes one round-trip downgrade on first hit.
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
 };
