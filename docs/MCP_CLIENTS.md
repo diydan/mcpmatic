@@ -107,12 +107,10 @@ primary enforcement; the payload's `expiresAt` is a second-line defense).
 
 Still pending — requires a deployed Worker URL. The
 `tests/oauth-smoke.sh` script is the post-deploy manual procedure; the
-engineer should run it against `https://browsermatic.dev`
-after the OAuth deploy (which requires
-`wrangler kv namespace create OAUTH_TOKENS` first to replace the
-`"to-be-created"` placeholder id in `wrangler.jsonc`).
+engineer should run it against `https://browsermatic.dev` after the
+OAuth deploy.
 
-### Latent bugs in `worker/mcp/server.ts` fixed in Task 10
+### Latent bugs in `worker/mcp/server.ts`
 
 The SDK-driven e2e flushed out two real bugs that the hand-rolled tests
 (which used `id: 1`) missed. Both would have blocked every compliant MCP

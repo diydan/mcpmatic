@@ -130,9 +130,7 @@ so anything the SDK accepts is what those clients accept.
   `StreamableHTTPClientTransport`. Asserts `serverInfo.name === "browsermatic"`.
   This is wire-format compatibility proof.
 - `tests/oauth-smoke.sh` — manual post-deploy procedure. Run after
-  `pnpm exec wrangler deploy` (which requires
-  `wrangler kv namespace create OAUTH_TOKENS` first to replace the
-  `"to-be-created"` placeholder id) against the live Worker URL.
+  `pnpm exec wrangler deploy` against the live Worker URL.
 - `tests/worker-routes.test.ts` — route-wiring guard. Confirms
   `worker/index.ts` dispatches `/oauth/register`, `/oauth/authorize`,
   `/oauth/token` to the correct handlers.
