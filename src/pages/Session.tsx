@@ -362,10 +362,19 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             setMapSiteBusy(false);
           }
           if (msg.type === "manifest_draft") {
+            // Clear the pending "Map this site" spinner unconditionally: any
+            // manifest_draft, even an empty one for another origin, means the
+            // request that set it has been answered.
             setMapSiteBusy(false);
-            setManifestDraft(
-              msg.tools.length > 0 ? { origin: msg.origin, tools: msg.tools } : null,
-            );
+            // broadcast() reaches every socket, so a stray empty draft for a
+            // different origin (an automatic generation racing on another
+            // tab) must not blow away the review dialog currently on screen.
+            // Functional-update form: this handler is registered once, so
+            // closing over manifestDraft would read a stale render-time value.
+            setManifestDraft((prev) => {
+              if (msg.tools.length > 0) return { origin: msg.origin, tools: msg.tools };
+              return prev?.origin === msg.origin ? null : prev;
+            });
           }
         },
       },
