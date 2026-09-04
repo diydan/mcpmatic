@@ -28,6 +28,15 @@ const DO_STUB_ORIGIN = "https://stub";
 
 const REGISTRATION_PATH = "/oauth/register";
 
+/**
+ * Cap on persisted `client_name` length. The audit (§1.7 of
+ * task-1-report.md) flagged that an unbounded `client_name` costs 1 byte
+ * of durable storage per byte of caller input. 200 chars is enough for
+ * any reasonable human-readable label without becoming a cost or abuse
+ * surface; longer inputs are truncated.
+ */
+export const CLIENT_NAME_MAX_LEN = 200;
+
 export function isRegistrationPath(path: string): boolean {
   return path === REGISTRATION_PATH;
 }
@@ -87,12 +96,42 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
   // and then lives only in the caller's memory. See worker/oauth/secret.ts.
   const clientSecretSalt = freshSalt();
   const clientSecretHash = await hashClientSecret(clientSecret, clientSecretSalt);
+
+  // client_name: missing → "unnamed" (unchanged); explicit empty/whitespace
+  // → 400 invalid_request; over CLIENT_NAME_MAX_LEN → truncate.
+  const rawName = body.client_name;
+  let clientName: string;
+  if (rawName === undefined || rawName === null) {
+    clientName = "unnamed";
+  } else if (typeof rawName !== "string") {
+    return Response.json(
+      {
+        error: "invalid_request",
+        error_description: "client_name must be a string",
+      },
+      { status: 400 },
+    );
+  } else if (rawName.trim().length === 0) {
+    return Response.json(
+      {
+        error: "invalid_request",
+        error_description: "client_name must not be empty or whitespace",
+      },
+      { status: 400 },
+    );
+  } else {
+    clientName =
+      rawName.length > CLIENT_NAME_MAX_LEN
+        ? rawName.slice(0, CLIENT_NAME_MAX_LEN)
+        : rawName;
+  }
+
   const client: OAuthClient = {
     clientId,
     clientSecretHash,
     clientSecretSalt,
     redirectUris: body.redirect_uris as string[],
-    clientName: typeof body.client_name === "string" ? body.client_name : "unnamed",
+    clientName,
     createdAt: Date.now(),
   };
 
