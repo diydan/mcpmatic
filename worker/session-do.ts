@@ -285,11 +285,19 @@ export class SessionDO extends DurableObject<Env> {
    * route so the Session page can hydrate its `consented` state on mount
    * when an origin was pre-seeded via POST /sessions. Idempotent.
    */
-  async listConsent(): Promise<{ consent: string[]; autonomous: boolean }> {
+  async listConsent(): Promise<{
+    consent: string[];
+    autonomous: boolean;
+    autoGrantNew: boolean;
+  }> {
     if (this.expired()) {
       throw new Error("session expired");
     }
-    return { consent: this.readConsent(), autonomous: this.readAutonomous() };
+    return {
+      consent: this.readConsent(),
+      autonomous: this.readAutonomous(),
+      autoGrantNew: this.readAutoGrantNew(),
+    };
   }
 
   /**
@@ -636,7 +644,10 @@ export class SessionDO extends DurableObject<Env> {
         await this.onInput(msg);
         return;
       case "autonomous":
-        await this.setAutonomous(msg.on);
+        // `autoGrantNew` is optional on the wire — a payload that omits it
+        // leaves the DO's stored flag untouched. Lets the console update one
+        // switch at a time without having to remember the other's value.
+        await this.setAutonomous(msg.on, msg.autoGrantNew);
         return;
     }
   }
@@ -1368,20 +1379,56 @@ export class SessionDO extends DurableObject<Env> {
     return row?.value === "1";
   }
 
+  /**
+   * Auto-grant new (non-catalog) origins. Independent of `readAutonomous` —
+   * autonomous-mode catalog grants can be on while this is off, which is the
+   * 2026-09-04 review's M8 default: the model still gets the demo catalog,
+   * but a navigation it decides on by itself to a site we don't know about
+   * must fail closed rather than silently widen the grant set.
+   *
+   * Stored as "0"/"1" alongside `autonomous`. A row that does not exist
+   * counts as "0" — existing sessions pre-dating this split keep the
+   * conservative behaviour.
+   */
+  private readAutoGrantNew(): boolean {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'autoGrantNew' LIMIT 1`,
+      )
+      .toArray()[0];
+    return row?.value === "1";
+  }
+
   private async allowOrigin(origin: string): Promise<boolean> {
     if (!origin) return false;
     if (this.consented(origin)) return true;
     if (!this.readAutonomous()) return false;
+    const known = new Set(MANIFESTS.map((m) => m.origin));
+    // Catalog origins are auto-granted as soon as autonomous is on; anything
+    // outside the catalog requires `autoGrantNew` too. Without that second
+    // gate a model-driven navigation to an arbitrary site would silently
+    // widen the grant set — the M9 agent review item this closes.
+    if (!known.has(origin) && !this.readAutoGrantNew()) return false;
     await this.grantConsent(origin);
     return this.consented(origin);
   }
 
-  private async setAutonomous(on: boolean): Promise<void> {
+  private async setAutonomous(
+    on: boolean,
+    autoGrantNew?: boolean,
+  ): Promise<void> {
     this.ctx.storage.sql.exec(
       `INSERT INTO meta (key, value) VALUES ('autonomous', ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       on ? "1" : "0",
     );
+    if (typeof autoGrantNew === "boolean") {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO meta (key, value) VALUES ('autoGrantNew', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        autoGrantNew ? "1" : "0",
+      );
+    }
     if (on) {
       const catalog = [...new Set(MANIFESTS.map((m) => m.origin))];
       const merged = mergeAutonomousConsent(this.readConsent(), catalog);
@@ -1468,6 +1515,7 @@ export class SessionDO extends DurableObject<Env> {
         origin && origin === this.remoteToolsOrigin ? this.remoteTools : [],
       consented: this.readConsent(),
       autonomous: this.readAutonomous(),
+      autoGrantNew: this.readAutoGrantNew(),
     });
   }
 

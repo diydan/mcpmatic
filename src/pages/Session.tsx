@@ -81,6 +81,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
   const [pageUrl, setPageUrl] = useState<string | null>(seededFromNav);
   const [remoteTools, setRemoteTools] = useState<DiscoveredTool[]>([]);
   const [autonomous, setAutonomous] = useState(false);
+  const [autoGrantNew, setAutoGrantNew] = useState(false);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const approvalWait = useRef<((ok: boolean) => void) | null>(null);
   /**
@@ -186,8 +187,10 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           const body = (await res.json()) as {
             consent?: unknown;
             autonomous?: unknown;
+            autoGrantNew?: unknown;
           };
           if (body.autonomous === true) setAutonomous(true);
+          if (body.autoGrantNew === true) setAutoGrantNew(true);
           if (Array.isArray(body.consent)) {
             seeded = unionOrigins(
               seeded,
@@ -253,6 +256,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           if (msg.origin) setPageOrigin(msg.origin);
           if (msg.url) setPageUrl(msg.url);
           if (typeof msg.autonomous === "boolean") setAutonomous(msg.autonomous);
+          if (typeof msg.autoGrantNew === "boolean") setAutoGrantNew(msg.autoGrantNew);
           if (msg.consented) {
             const next = new Set(msg.consented);
             const same =
@@ -563,14 +567,43 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           autonomous={autonomous}
           onAutonomous={(on) => {
             setAutonomous(on);
-            bridgeRef.current?.send({ v: 1, type: "autonomous", on });
+            // Carry `autoGrantNew` on every autonomous message: the DO's
+            // setter only writes the flag when the field is present, so
+            // sending the current value keeps both flags in sync rather
+            // than letting the other one drift if the user just toggled
+            // the catalog switch.
+            bridgeRef.current?.send({
+              v: 1,
+              type: "autonomous",
+              on,
+              autoGrantNew,
+            });
             setLines((l) => [
               ...l,
               {
                 kind: "system",
                 text: on
-                  ? "autonomous on — demo origins granted; new sites grant on open"
+                  ? "autonomous on — demo origins granted"
                   : "autonomous off — new sites need a grant",
+              },
+            ]);
+          }}
+          autoGrantNew={autoGrantNew}
+          onAutoGrantNew={(on) => {
+            setAutoGrantNew(on);
+            bridgeRef.current?.send({
+              v: 1,
+              type: "autonomous",
+              on: autonomous,
+              autoGrantNew: on,
+            });
+            setLines((l) => [
+              ...l,
+              {
+                kind: "system",
+                text: on
+                  ? "auto-grant new on — sites grant as ChatGPT opens them"
+                  : "auto-grant new off — new sites need a manual grant",
               },
             ]);
           }}
