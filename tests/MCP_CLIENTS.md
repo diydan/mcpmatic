@@ -52,7 +52,7 @@ Claude Desktop and ChatGPT builds still pending a deployed Worker URL)
 
 `tests/oauth-e2e-sdk.test.ts` drives the real
 `@modelcontextprotocol/sdk` (1.30+) through the full OAuth flow —
-register → authorize → token → SDK `connect()` → `serverInfo.name === "mcpmatic"`.
+register → authorize → token → SDK `connect()` → `serverInfo.name === "browsermatic"`.
 The SDK's `client.connect()` succeeds without modifying either side, which
 proves the Phase 1.5 OAuth surface works against any spec-compliant MCP
 client.

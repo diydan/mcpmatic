@@ -8,7 +8,7 @@ import {
   type ServerMessage,
   type ToolSchema,
 } from "../shared/protocol";
-import type { ManifestStep } from "../shared/manifest";
+import { runSteps } from "./steps";
 import { originSlug } from "../shared/origin";
 import { isPrivateUrl } from "./is-private-url";
 import { makeResolve4 } from "./doh-resolve4";
@@ -30,6 +30,7 @@ import {
   type ChatTurn,
 } from "./agent";
 import { MANIFESTS, manifestFor } from "./manifests";
+import type { ToolManifest } from "../shared/manifest";
 import { captureInteractiveElements, type CaptureFn } from "./dom-capture";
 import { generateManifest } from "./generate-manifest";
 import {
@@ -49,8 +50,41 @@ import {
 } from "./native-webmcp";
 import type { DiscoveredTool } from "../shared/protocol";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
+import {
+  ApprovalGate,
+  approvalFailureText,
+  missingFills,
+  stripProfilePaths,
+} from "./approval";
+import { parseBridgeRole } from "./bridge-role";
+import { claimDecision } from "./account";
+import { toAuditRows, type StoredAuditRow } from "./audit-rows";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+/**
+ * Under the MCP SDK's DEFAULT_REQUEST_TIMEOUT_MSEC (60_000), so a stalled
+ * approval surfaces as our error rather than the client's own abandonment.
+ */
+const APPROVAL_TIMEOUT_MS = 45_000;
+/**
+ * How long a tool call waits inline before handing back an id.
+ *
+ * Long enough for a human who is already watching the console, short enough
+ * that the caller keeps most of its budget and spends little time exposed to a
+ * Durable Object reset. See ApprovalGate.requestBounded.
+ */
+const INLINE_APPROVAL_MS = 10_000;
+
+/**
+ * What a tool call answers with. `resolved` names the profile fields that
+ * actually moved; `reason` is the failure class site telemetry records.
+ */
+type ToolResult = {
+  ok: boolean;
+  text: string;
+  resolved?: string[];
+  reason?: string;
+};
 /** Grace after the last client disconnects before the browser is released. */
 const IDLE_GRACE_MS = 3 * 60 * 1000;
 const VIEWPORT = { width: 1280, height: 720 };
@@ -63,10 +97,12 @@ type LiveBrowser = {
     url: () => string;
     title: () => Promise<string>;
     innerText: (selector: string) => Promise<string>;
-    fill?: (selector: string, value: string) => Promise<void>;
-    click?: (selector: string) => Promise<void>;
-    press?: (selector: string, key: string) => Promise<void>;
-    waitForSelector?: (selector: string) => Promise<unknown>;
+    // The options bag matters: without an explicit timeout Playwright waits
+    // its 30s default for an element that is simply not on this page.
+    fill?: (selector: string, value: string, opts?: { timeout?: number }) => Promise<void>;
+    click?: (selector: string, opts?: { timeout?: number }) => Promise<void>;
+    press?: (selector: string, key: string, opts?: { timeout?: number }) => Promise<void>;
+    waitForSelector?: (selector: string, opts?: { timeout?: number }) => Promise<unknown>;
     evaluate?: EvaluateFn & DiscoverFn & CaptureFn;
     context: () => {
       newCDPSession: (page: unknown) => Promise<CdpSession>;
@@ -88,6 +124,13 @@ export class SessionDO extends DurableObject<Env> {
   private launching: Promise<LiveBrowser | null> | null = null;
   private pending: PendingTurn | null = null;
   private driving = false;
+  private readonly approvals = new ApprovalGate({
+    // Console sockets only. A façade socket belongs to an agent, and asking
+    // it to approve would put the dialog somewhere no human is reading.
+    hasConsole: () => this.ctx.getWebSockets("console").length > 0,
+    send: (req) => this.broadcast({ v: 1, type: "approval_request", ...req }),
+    timeoutMs: APPROVAL_TIMEOUT_MS,
+  });
   private remoteTools: DiscoveredTool[] = [];
   private remoteToolsOrigin: string | null = null;
   /**
@@ -102,6 +145,14 @@ export class SessionDO extends DurableObject<Env> {
       this.ctx.storage.sql.exec(AUDIT_DDL);
       this.ctx.storage.sql.exec(
         `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+      );
+      this.ctx.storage.sql.exec(
+        `CREATE TABLE IF NOT EXISTS approval_results (
+           id TEXT PRIMARY KEY,
+           ok INTEGER NOT NULL,
+           text TEXT NOT NULL,
+           ts INTEGER NOT NULL
+         )`,
       );
       this.ctx.setWebSocketAutoResponse(
         new WebSocketRequestResponsePair("ping", "pong"),
@@ -148,6 +199,15 @@ export class SessionDO extends DurableObject<Env> {
         `INSERT INTO meta (key, value) VALUES ('sessionToken', ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
         token,
+      );
+      // The clock starts at mint, not at first bridge accept: a façade URL
+      // nobody ever opened is still a session whose consent must not outlive
+      // two hours. DO NOTHING keeps a replay of POST /sessions from resetting
+      // a clock that is already running.
+      this.ctx.storage.sql.exec(
+        `INSERT INTO meta (key, value) VALUES ('createdAt', ?)
+         ON CONFLICT(key) DO NOTHING`,
+        String(Date.now()),
       );
       if (origin) {
         // Mirrors `grantConsent`'s storage shape: a single meta row
@@ -197,10 +257,147 @@ export class SessionDO extends DurableObject<Env> {
    * when an origin was pre-seeded via POST /sessions. Idempotent.
    */
   async listConsent(): Promise<{ consent: string[]; autonomous: boolean }> {
+    if (this.expired()) {
+      throw new Error("session expired");
+    }
     return { consent: this.readConsent(), autonomous: this.readAutonomous() };
   }
 
+  /**
+   * Results of calls approved after their caller gave up, keyed by approval
+   * id and read back by check_approval.
+   *
+   * Result text only. A tool result names what ran and where; it never carries
+   * a profile value, and there is nowhere here to put one if it did.
+   */
+  private storeApprovalResult(id: string, result: ToolResult): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO approval_results (id, ok, text, ts) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET ok = excluded.ok, text = excluded.text`,
+      id,
+      result.ok ? 1 : 0,
+      result.text,
+      Date.now(),
+    );
+  }
+
+  private readApprovalResult(id: string): ToolResult | null {
+    const row = this.ctx.storage.sql
+      .exec<{ ok: number; text: string }>(
+        `SELECT ok, text FROM approval_results WHERE id = ? LIMIT 1`,
+        id,
+      )
+      .toArray()[0];
+    return row ? { ok: row.ok === 1, text: row.text } : null;
+  }
+
+  private accountId(): string | null {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'accountId' LIMIT 1`,
+      )
+      .toArray()[0];
+    return row?.value ?? null;
+  }
+
+  /**
+   * The account this session was claimed by, for the passkey registration
+   * route only.
+   *
+   * Server-side callers only: the worker uses it to decide which account an
+   * authenticator may be attached to, and never returns it to a client. That
+   * is the whole point — registration must prove possession of the session,
+   * not merely knowledge of an account id.
+   */
+  async accountForPasskey(): Promise<{ accountId: string | null }> {
+    return { accountId: this.accountId() };
+  }
+
+  /**
+   * Bind this session to an account, inheriting its grants.
+   *
+   * Claimed, not replaced: the session keeps its token, its browser and
+   * anything already granted, and the account learns those grants too. First
+   * claim wins — the token is a bearer credential, so a second account must
+   * not be able to bind it and inherit the list.
+   */
+  async claimAccount(
+    accountId: string,
+  ): Promise<{ ok: boolean; consent?: string[]; error?: string }> {
+    const decision = claimDecision(this.accountId(), accountId);
+    if (!decision.ok) return { ok: false, error: decision.reason };
+    const { grants } = await this.env.ACCOUNT.getByName(accountId).claim(
+      this.sessionToken() ?? "",
+      this.readConsent(),
+    );
+    this.ctx.storage.sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('accountId', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      accountId,
+    );
+    this.writeConsent(grants);
+    this.sendState();
+    return { ok: true, consent: grants };
+  }
+
+  private sessionToken(): string | null {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'sessionToken' LIMIT 1`,
+      )
+      .toArray()[0];
+    return row?.value ?? null;
+  }
+
+  private writeConsent(origins: readonly string[]): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('consent', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      JSON.stringify([...origins]),
+    );
+  }
+
+  /**
+   * Remove an origin from the consent list, here and on the account this
+   * session was claimed by. The account write is not awaited, for the same
+   * reason `grantConsent`'s is not: consent must answer without waiting on a
+   * second Durable Object. Revoking an origin the session never had is a
+   * no-op, so a stale console cannot resurrect state by revoking it.
+   */
+  async revokeConsent(origin: string): Promise<{ ok: true; consent: string[] }> {
+    if (this.expired()) {
+      throw new Error("session expired");
+    }
+    const allowed = this.readConsent().filter((o) => o !== origin);
+    this.writeConsent(allowed);
+    const accountId = this.accountId();
+    if (accountId && origin) {
+      this.ctx.waitUntil(
+        this.env.ACCOUNT.getByName(accountId)
+          .revoke(origin)
+          .then(() => undefined),
+      );
+    }
+    this.sendState();
+    return { ok: true, consent: allowed };
+  }
+
   async grantConsent(origin: string): Promise<{ ok: true }> {
+    if (this.expired()) {
+      throw new Error("session expired");
+    }
+    // Write through to the account, if this session has been claimed, so the
+    // grant outlives the session's two hours. Not awaited: consent must answer
+    // without waiting on a second Durable Object, and the local mirror below
+    // is what every read in this class actually uses.
+    const accountId = this.accountId();
+    if (accountId && origin) {
+      this.ctx.waitUntil(
+        this.env.ACCOUNT.getByName(accountId)
+          .grant(origin)
+          .then(() => undefined),
+      );
+    }
     const allowed = this.readConsent();
     if (!allowed.includes(origin)) {
       allowed.push(origin);
@@ -225,17 +422,24 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   async listAudit(): Promise<AuditRow[]> {
-    const rows = this.ctx.storage.sql
-      .exec<{ origin: string; tool: string; field_names: string; ts: number }>(
-        `SELECT origin, tool, field_names, ts FROM audit ORDER BY ts DESC LIMIT 50`,
-      )
-      .toArray();
-    return rows.map((r) => ({
-      origin: r.origin,
-      tool: r.tool,
-      fieldNames: JSON.parse(r.field_names) as string[],
-      timestamp: r.ts,
-    }));
+    return toAuditRows(
+      this.ctx.storage.sql
+        .exec<StoredAuditRow>(
+          `SELECT origin, tool, field_names, ts FROM audit ORDER BY ts DESC LIMIT 50`,
+        )
+        .toArray(),
+    );
+  }
+
+  /**
+   * The account's log, which outlives this session. Falls back to the
+   * session's own rows when there is no account — an unclaimed session is
+   * still a working session.
+   */
+  async listHistory(): Promise<AuditRow[]> {
+    const id = this.accountId();
+    if (!id) return this.listAudit();
+    return this.env.ACCOUNT.getByName(id).listAudit();
   }
 
   /**
@@ -258,20 +462,54 @@ export class SessionDO extends DurableObject<Env> {
     name: string,
     args: Record<string, unknown>,
   ): Promise<{ ok: boolean; text: string }> {
-    let result: { ok: boolean; text: string };
+    const startedAt = Date.now();
+    const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
+    // The MCP entry, and only this one, strips caller-supplied profile paths.
+    // Otherwise a client could pass {"address.line1": "…"} and route around
+    // the approval — and the audit row would name a field that was never the
+    // user's profile. The façade path merges *after* its own bless, so it is
+    // deliberately left alone.
+    const safeArgs = stripProfilePaths(manifest?.fillsFrom, args);
+    let result: { ok: boolean; text: string; resolved?: string[] };
     try {
-      result = await this.runTool(name, args);
+      result = await this.runTool(name, safeArgs);
     } catch (err) {
       result = {
         ok: false,
         text: err instanceof Error ? err.message : "tool failed",
       };
     }
-    const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
-    const fieldNames = manifest?.fillsFrom ?? [];
     const auditOrigin = manifest?.origin ?? this.currentOrigin() ?? "";
-    this.recordAudit(auditOrigin, name, fieldNames);
-    return result;
+    this.recordAudit(auditOrigin, name, result.resolved ?? []);
+    this.recordSiteCall(manifest, result, Date.now() - startedAt);
+    return { ok: result.ok, text: result.text };
+  }
+
+  /**
+   * What agents did to this site's tools, for the site's owner.
+   *
+   * A different record from the audit row written beside it, kept in a
+   * different place on purpose: the audit row is this person's account of
+   * which of their fields travelled, and this is the merchant's account of how
+   * their tool behaved for everyone. Nothing here identifies the caller, and
+   * the tool is named as the *site* knows it, not as we qualify it.
+   *
+   * Not awaited: telemetry must never be in the path of a tool result.
+   */
+  private recordSiteCall(
+    manifest: { origin: string; nativeName?: string; name: string } | null | undefined,
+    result: { ok: boolean; reason?: string },
+    ms: number,
+  ): void {
+    if (!manifest) return;
+    this.ctx.waitUntil(
+      this.env.SITE.getByName(manifest.origin).recordCall(
+        manifest.nativeName ?? manifest.name,
+        result.ok,
+        result.ok ? null : (result.reason ?? "failed"),
+        ms,
+      ),
+    );
   }
 
   async destroy(): Promise<void> {
@@ -321,6 +559,9 @@ export class SessionDO extends DurableObject<Env> {
       case "tool_exec":
         await this.onToolExec(msg.id, msg.name, msg.arguments);
         return;
+      case "approval_result":
+        this.approvals.settle(msg.id, msg.ok, msg.fills);
+        return;
       case "tool_result":
         await this.onToolResult(msg.callId, msg.ok, msg.result);
         return;
@@ -345,6 +586,12 @@ export class SessionDO extends DurableObject<Env> {
     } catch {
       /* already closing */
     }
+    // Nobody left who could answer. Settle now rather than making each
+    // suspended call sit out its 45 seconds. A façade socket closing does not
+    // count — it was never going to answer.
+    if (this.ctx.getWebSockets("console").every((s) => s === ws)) {
+      this.approvals.abandonAll();
+    }
     const remaining = this.ctx.getWebSockets().filter((s) => s !== ws);
     if (remaining.length > 0) return;
     // Grace, not immediate teardown: a refresh must not cost the user the
@@ -356,7 +603,7 @@ export class SessionDO extends DurableObject<Env> {
     );
   }
 
-  private async acceptBridge(_request: Request): Promise<Response> {
+  private async acceptBridge(request: Request): Promise<Response> {
     if (!this.createdAt()) {
       this.ctx.storage.sql.exec(
         `INSERT INTO meta (key, value) VALUES ('createdAt', ?)
@@ -367,12 +614,19 @@ export class SessionDO extends DurableObject<Env> {
     if (this.expired()) {
       return new Response("session expired", { status: 410 });
     }
-    for (const existing of this.ctx.getWebSockets()) {
+    const role = parseBridgeRole(request.url);
+    // Replace only a socket of the same role. A console and a façade are two
+    // views of one session and must coexist — the agent is on the façade while
+    // the human watches and approves on the console. Closing all of them, as
+    // this did when there was only one view, would mean opening the console
+    // disconnected the agent.
+    for (const existing of this.ctx.getWebSockets(role)) {
       existing.close(4000, "replaced");
     }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-    this.ctx.acceptWebSocket(server);
+    // Tagged at accept time so `getWebSockets("console")` can find the human.
+    this.ctx.acceptWebSocket(server, [role]);
     await this.armTtlAlarm();
     this.send(server, {
       v: 1,
@@ -453,7 +707,8 @@ export class SessionDO extends DurableObject<Env> {
   ): Promise<void> {
     this.driving = true;
     this.sendState();
-    let result: { ok: boolean; text: string };
+    const startedAt = Date.now();
+    let result: { ok: boolean; text: string; resolved?: string[]; reason?: string };
     try {
       result = await this.runTool(name, args);
     } catch (err) {
@@ -474,11 +729,13 @@ export class SessionDO extends DurableObject<Env> {
       result: result.text,
     });
     const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
+    // What moved, not what was declared. See runTool's `resolved`.
     this.recordAudit(
       manifest?.origin ?? this.currentOrigin() ?? "",
       name,
-      manifest?.fillsFrom ?? [],
+      result.resolved ?? [],
     );
+    this.recordSiteCall(manifest, result, Date.now() - startedAt);
   }
 
   /**
@@ -509,10 +766,21 @@ export class SessionDO extends DurableObject<Env> {
     await this.stepAgent();
   }
 
+  /**
+   * `resolved` names the profile fields that actually moved on this call —
+   * which is what the audit row records. The manifest's `fillsFrom` is a
+   * declaration, not an event, and logging the declaration overcounts.
+   */
   private async runTool(
     name: string,
     args: Record<string, unknown>,
-  ): Promise<{ ok: boolean; text: string }> {
+  ): Promise<{
+    ok: boolean;
+    text: string;
+    resolved?: string[];
+    /** Failure class for site telemetry. Never a value or an argument. */
+    reason?: string;
+  }> {
     if (name === "list_available_origins") {
       return {
         ok: true,
@@ -550,7 +818,13 @@ export class SessionDO extends DurableObject<Env> {
       // get_page_state.
       const live = this.live;
       if (!live) {
-        return { ok: true, text: "No remote page open yet. Grant an origin first." };
+        // "Grant an origin first" was wrong and cost real debugging time: the
+        // origin can be granted and this still fires, because consent does not
+        // open a page. Name the thing that actually unblocks it.
+        return {
+          ok: true,
+          text: "No remote page open yet. Call navigate_to with a granted origin first.",
+        };
       }
       if (!live.page.evaluate) {
         return { ok: false, text: "cannot inspect the remote page" };
@@ -661,11 +935,103 @@ export class SessionDO extends DurableObject<Env> {
       return { ok: true, text: `navigated to ${live.page.url()}` };
     }
 
+    if (name === "check_approval") {
+      const id = String(args.id ?? "");
+      const stored = this.readApprovalResult(id);
+      if (stored) return stored;
+      // No result yet is not the same as no such approval, but from here they
+      // look alike: an id we never issued and one still waiting both have
+      // nothing filed. Say what the caller can act on.
+      return {
+        ok: false,
+        text: `approval ${id || "(none given)"} has no result yet — it is still waiting, or it expired.`,
+      };
+    }
+
     const manifest = await manifestFor(name, this.env.MANIFEST_REGISTRY);
     if (!manifest) return { ok: false, text: `unknown tool ${name}` };
     if (!(await this.allowOrigin(manifest.origin))) {
       return { ok: false, text: "origin not consented" };
     }
+    // Ask before driving anything. A call nobody can approve should not cost a
+    // Chromium launch, and a tool that cannot fill must say so rather than
+    // filling blanks and reporting success.
+    const declared = manifest.fillsFrom ?? [];
+    const supplied = declared.filter((path) => args[path] !== undefined);
+    const missing = missingFills(manifest.fillsFrom, args);
+    if (!missing.length) {
+      return this.executeManifest(manifest, name, args, supplied);
+    }
+    const ask = { origin: manifest.origin, tool: name, fieldNames: missing };
+    const bounded = await this.approvals.requestBounded(
+      ask,
+      INLINE_APPROVAL_MS,
+      // Answered after the caller stopped waiting. Run the work now and file
+      // the result under the id so check_approval can return it. The fills
+      // exist only inside this closure, same as on the inline path.
+      async (late, id) => {
+        let result: ToolResult;
+        try {
+          result = late.ok
+            ? await this.executeManifest(
+                manifest,
+                name,
+                { ...args, ...late.fills },
+                [...supplied, ...Object.keys(late.fills)],
+              )
+            : { ok: false, text: approvalFailureText(late.reason, missing) };
+        } catch (err) {
+          result = {
+            ok: false,
+            text: err instanceof Error ? err.message : "tool failed",
+          };
+        }
+        this.storeApprovalResult(id, result);
+        this.recordAudit(manifest.origin, name, result.resolved ?? []);
+        this.recordSiteCall(manifest, result, 0);
+      },
+    );
+    if (bounded.status === "approved") {
+      return this.executeManifest(
+        manifest,
+        name,
+        { ...args, ...bounded.fills },
+        [...supplied, ...Object.keys(bounded.fills)],
+      );
+    }
+    if (bounded.status === "pending") {
+      // Not a failure -- a receipt. The human has not answered yet, and
+      // holding the caller open is what orphaned calls when the Durable
+      // Object reset underneath them.
+      return {
+        ok: false,
+        text: `approval-pending: waiting for a human to approve ${missing.join(", ")}. Call check_approval with id ${bounded.id}.`,
+        reason: "approval-pending",
+      };
+    }
+    return {
+      ok: false,
+      text: approvalFailureText(
+        bounded.status === "denied" ? "denied" : "needs-console",
+        missing,
+      ),
+      reason: bounded.status,
+    };
+  }
+
+  /**
+   * Everything after the human has (or has not) been asked.
+   *
+   * Extracted so the inline path and the late continuation run exactly the
+   * same code: a call approved after the caller gave up must not take a
+   * different route through the browser than one approved while it waited.
+   */
+  private async executeManifest(
+    manifest: ToolManifest,
+    name: string,
+    callArgs: Record<string, unknown>,
+    resolved: string[],
+  ): Promise<ToolResult> {
     const live = await this.ensureBrowser();
     if (!live) return { ok: false, text: "no browser" };
     if (originFromUrl(live.page.url()) !== manifest.origin) {
@@ -683,71 +1049,61 @@ export class SessionDO extends DurableObject<Env> {
       const native = await callNativeTool(
         live.page.evaluate.bind(live.page),
         manifest.nativeName,
-        args,
+        callArgs,
+        // The tool's own schema, if we have observed this origin. Lets a call
+        // that cannot satisfy it be classified rather than thrown — the one
+        // fact a site owner can act on.
+        this.declaredSchemaFor(manifest.origin, manifest.nativeName),
       );
       // A manifest with a nativeName proxies the store's own tool. If that tool
       // is not there, say so — empty steps must not report a fake success. And
       // say *which* of the three failures it was.
       if (!native.used) {
-        return { ok: false, text: nativeFailure(manifest.nativeName, manifest.origin, native) };
+        return {
+          ok: false,
+          text: nativeFailure(manifest.nativeName, manifest.origin, native),
+          reason: native.reason,
+        };
       }
       this.setCurrentOrigin(manifest.origin);
       const how = native.polyfilled
         ? `${manifest.origin}'s own ${manifest.nativeName} (WebMCP supplied by this session)`
         : `${manifest.origin}'s own ${manifest.nativeName} (native WebMCP)`;
-      return { ok: true, text: native.text ?? `ran ${how}` };
+      return { ok: true, text: native.text ?? `ran ${how}`, resolved };
     }
-    for (const step of manifest.steps) {
-      await this.runStep(live, step, args);
-    }
+    const { fillsAttempted, fillsLanded } = await runSteps(
+      live.page,
+      manifest.steps,
+      callArgs,
+      (url) => this.gotoGuarded(live, url),
+    );
     this.setCurrentOrigin(manifest.origin);
-    return { ok: true, text: `ran ${name} at ${live.page.url()}` };
+    // The failure this whole design exists to remove: six fields typed into a
+    // page that has none of them, reported as a success. A fill tool that
+    // filled nothing did nothing, and the human is owed that sentence.
+    if (fillsAttempted > 0 && fillsLanded === 0) {
+      return {
+        ok: false,
+        text: `${name} found none of its fields on ${live.page.url()} — nothing was filled. Open the page that has the form first.`,
+        reason: "no-field",
+        resolved,
+      };
+    }
+    const partial =
+      fillsLanded < fillsAttempted
+        ? ` (filled ${fillsLanded} of ${fillsAttempted} fields)`
+        : "";
+    return { ok: true, text: `ran ${name} at ${live.page.url()}${partial}`, resolved };
   }
 
-  private async runStep(
-    live: LiveBrowser,
-    step: ManifestStep,
-    args: Record<string, unknown>,
-  ): Promise<void> {
-    const interpolate = (template: string) =>
-      template.replace(/\{\{([^}]+)\}\}/g, (_, key: string) =>
-        encodeURIComponent(String(args[key] ?? "")),
-      );
-
-    if (step.action === "goto") {
-      const url = interpolate(step.url);
-      const blocked = await isPrivateUrl(url, makeResolve4());
-      if (blocked) throw new Error("navigation refused (ssrf)");
-      await live.page.goto(url, {
-        waitUntil: "domcontentloaded",
-        timeout: 30_000,
-      });
-      return;
-    }
-    if (step.action === "fill" || step.action === "type") {
-      const value = String(args[step.from] ?? "");
-      try {
-        await live.page.fill?.(step.selector, value);
-      } catch {
-        /* field missing on this checkout step */
-      }
-      return;
-    }
-    if (step.action === "click") {
-      try {
-        await live.page.click?.(step.selector);
-      } catch {
-        /* control missing on this page (cookie banner, layout) */
-      }
-      return;
-    }
-    if (step.action === "press") {
-      await live.page.press?.(step.selector, step.key);
-      return;
-    }
-    if (step.action === "wait") {
-      await live.page.waitForSelector?.(step.selector);
-    }
+  /** The one step that leaves the page it is on, so the one that needs the guard. */
+  private async gotoGuarded(live: LiveBrowser, url: string): Promise<void> {
+    const blocked = await isPrivateUrl(url, makeResolve4());
+    if (blocked) throw new Error("navigation refused (ssrf)");
+    await live.page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
   }
 
   private async onInput(msg: ClientMessage & { type: "input" }): Promise<void> {
@@ -870,13 +1226,29 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   private recordAudit(origin: string, tool: string, fieldNames: string[]): void {
+    const ts = Date.now();
     this.ctx.storage.sql.exec(
       `INSERT INTO audit (origin, tool, field_names, ts) VALUES (?, ?, ?, ?)`,
       origin,
       tool,
       JSON.stringify(fieldNames),
-      Date.now(),
+      ts,
     );
+    // Mirror to the account so the row outlives this session. Same reasoning
+    // as consent: the local table stays the read path the broadcast uses, and
+    // the durable copy is what a new session — or per-origin telemetry — can
+    // still see tomorrow.
+    const accountId = this.accountId();
+    if (accountId) {
+      this.ctx.waitUntil(
+        this.env.ACCOUNT.getByName(accountId).recordAudit(
+          origin,
+          tool,
+          fieldNames,
+          ts,
+        ),
+      );
+    }
     void this.listAudit()
       .then((rows) => this.broadcast({ v: 1, type: "audit", rows }))
       .catch(() => {
@@ -1059,6 +1431,12 @@ export class SessionDO extends DurableObject<Env> {
     this.broadcast({ v: 1, type: "manifest_draft", origin, tools: pending });
   }
 
+  /** The observed schema for a remote tool, when the page we read is its own. */
+  private declaredSchemaFor(origin: string, nativeName: string): unknown {
+    if (this.remoteToolsOrigin !== origin) return undefined;
+    return this.remoteTools.find((t) => t.name === nativeName)?.inputSchema;
+  }
+
   private async refreshRemoteTools(live: LiveBrowser): Promise<void> {
     if (!live.page.evaluate) {
       this.remoteTools = [];
@@ -1127,6 +1505,9 @@ function nativeFailure(
   }
   if (outcome.reason === "no-webmcp") {
     return `${origin} exposes no document.modelContext on this page`;
+  }
+  if (outcome.reason === "schema-mismatch") {
+    return `${nativeName} on ${origin} declares a schema these arguments cannot satisfy: ${outcome.error ?? "unknown"}`;
   }
   return `${nativeName} is not registered on ${origin} right now`;
 }

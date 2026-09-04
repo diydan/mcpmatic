@@ -1,4 +1,4 @@
-# mcpmatic
+# BrowserMatic
 
 A WebMCP session that spans origins.
 
@@ -12,9 +12,16 @@ profile fills only the fields a tool named, after the human blesses them.
 **Live:** <https://mcpmatic.dan-3c7.workers.dev> — open it, grant an origin,
 and the tools appear. No login, no key, no install.
 
+One session, two views. `/c/<token>` is the **console** — what you open. It
+holds the profile, and it is the only view that can approve a field leaving
+your machine. `/s/<token>` is the **façade** — what an agent loads; it
+registers the tools and holds no profile. Both can be connected at once, which
+is the normal way to use this: the agent works on the façade while you watch
+and approve on the console.
+
 In ChatGPT desktop use **GPT-5.6 Sol or Terra**: Luna has WebMCP disabled, and
-Enterprise/Edu workspaces have no site tools. Open the same `/s/<token>` URL
-there and grant the origin in that view.
+Enterprise/Edu workspaces have no site tools. Give it the `/s/<token>` URL and
+grant the origin in that view.
 
 Architecture below. Design decisions are recorded in the commit history.
 
@@ -28,6 +35,11 @@ learns a shipping address when checkout is filled.
 - Only declared paths resolve (`fillsFrom: ["address.postcode"]` is that key).
 - Values are never logged. The audit table has no value column.
 - Native WebMCP on the remote page is preferred over click replay.
+- A tool that draws on the profile cannot run unattended. It suspends until a
+  human approves it on the console, naming the exact fields; with no console
+  attached it returns `needs-console` rather than filling blanks and reporting
+  success. An agent holding the same token cannot answer for you — the façade
+  is not sent the request.
 - `document.modelContext` is a browser API behind a Chrome origin trial, and the
   remote browser does not have it. This session installs the API into the remote
   page before the page's own scripts run, so a storefront that ships WebMCP can
@@ -310,7 +322,7 @@ so anything the SDK accepts is what those clients accept.
   rejection.
 - `tests/oauth-e2e-sdk.test.ts` — same flow, but the final `/mcp`
   handshake is driven by the real `@modelcontextprotocol/sdk` `Client` +
-  `StreamableHTTPClientTransport`. Asserts `serverInfo.name === "mcpmatic"`.
+  `StreamableHTTPClientTransport`. Asserts `serverInfo.name === "browsermatic"`.
   This is wire-format compatibility proof.
 - `tests/oauth-smoke.sh` — manual post-deploy procedure. Run after
   `pnpm exec wrangler deploy` (which requires

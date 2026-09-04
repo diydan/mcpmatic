@@ -1,4 +1,5 @@
 import type { DiscoveredTool } from "../shared/protocol";
+import { checkArgs, type SchemaCheck } from "./schema-check";
 
 export type { DiscoveredTool };
 
@@ -10,7 +11,7 @@ export type NativeOutcome = {
   used: boolean;
   text?: string;
   /** Why the native tool was not used. Absent when `used` is true. */
-  reason?: "no-webmcp" | "no-tool" | "threw";
+  reason?: "no-webmcp" | "no-tool" | "threw" | "schema-mismatch";
   /** Message from the remote tool when it threw. Never an argument value. */
   error?: string;
   /** True when the remote browser had no WebMCP and we supplied the API. */
@@ -29,7 +30,25 @@ export async function callNativeTool(
   evaluate: EvaluateFn,
   nativeName: string,
   args: Record<string, unknown>,
+  /**
+   * The tool's own declared schema, as observed on the page. When present, a
+   * call that cannot satisfy it is classified rather than sent: the remote
+   * tool would throw, and "threw" loses the only fact a site owner can act on.
+   * Absent means we do not know, and we call through rather than invent a
+   * failure.
+   */
+  declaredSchema?: unknown,
 ): Promise<NativeOutcome> {
+  const check = checkArgs(declaredSchema, args);
+  if (!check.ok) {
+    return {
+      used: false,
+      reason: "schema-mismatch",
+      // Field names only. A value has no more business here than in the audit
+      // table.
+      error: describeMismatch(check),
+    };
+  }
   try {
     return await evaluate(nativeCall, { nativeName, args });
   } catch (err) {
@@ -99,6 +118,16 @@ async function nativeCall(payload: {
   };
 }
 
+function describeMismatch(check: Extract<SchemaCheck, { ok: false }>): string {
+  const parts: string[] = [];
+  if (check.missing.length) parts.push(`missing ${check.missing.join(", ")}`);
+  if (check.wrongType.length) parts.push(`wrong type for ${check.wrongType.join(", ")}`);
+  if (check.unexpected.length) parts.push(`not in schema: ${check.unexpected.join(", ")}`);
+  return parts.join("; ");
+}
+
+// Exported for generate-manifest.ts, which validates a synthesised tool's name
+// against the same pattern rather than keeping a second copy of it.
 export const NAME_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 const EMPTY_SCHEMA: Record<string, unknown> = {
   type: "object",

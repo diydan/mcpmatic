@@ -24,6 +24,10 @@ import {
 } from "../lib/register-all";
 import { Surface } from "../components/Surface";
 import { profileStore, seedIfEmpty } from "../lib/profile-store";
+import { answerApproval } from "../lib/approval-reply";
+import { accountId } from "../lib/account-store";
+import { PasskeyBar } from "../components/PasskeyBar";
+import { unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
 import { navigationHref, normaliseOrigin } from "../../shared/origin";
@@ -46,7 +50,15 @@ function originFromNavState(state: unknown): string | null {
   return typeof origin === "string" && origin ? origin : null;
 }
 
-export function Session() {
+type SessionRole = "console" | "facade";
+
+/**
+ * `console` is the human at `/c/<token>`: it holds the profile and answers
+ * approvals. `facade` is `/s/<token>`, loaded by an agent — it registers tools
+ * and is never asked to release a field on the human's behalf.
+ */
+export function Session({ role = "facade" }: { role?: SessionRole }) {
+  const isConsole = role === "console";
   const { sessionToken = "" } = useParams();
   const seededFromNav = originFromNavState(useLocation().state);
   const [tools, setTools] = useState<ToolSchema[]>([]);
@@ -74,6 +86,28 @@ export function Session() {
   const [manifestDraft, setManifestDraft] = useState<ManifestDraft | null>(null);
   const [mapSiteBusy, setMapSiteBusy] = useState(false);
   const blessWait = useRef<((ok: boolean) => void) | null>(null);
+  /**
+   * One dialog at a time. A second request arriving while one is open is
+   * denied rather than replacing it — replacing would strand whoever is
+   * waiting on the first, and there is only one human here to answer anyway.
+   */
+  /** Close a dialog the server has stopped waiting on, freeing the slot. */
+  const dismissBless = useCallback(() => {
+    blessWait.current = null;
+    setBless(null);
+  }, []);
+  const askBless = useCallback(
+    (req: BlessRequest) =>
+      new Promise<boolean>((resolve) => {
+        if (blessWait.current) {
+          resolve(false);
+          return;
+        }
+        blessWait.current = resolve;
+        setBless(req);
+      }),
+    [],
+  );
   const bridgeRef = useRef<ReturnType<typeof openBridge> | null>(null);
   const registrationRef = useRef<Registration | null>(null);
   const consentedRef = useRef(consented);
@@ -126,6 +160,32 @@ export function Session() {
     let cancelled = false;
     (async () => {
       let seeded: string[] = [];
+      // Claim the session for this browser's account first, so the grants it
+      // already carries come back before we read consent. A session that was
+      // never claimed, or a browser with no storage, simply skips this and
+      // behaves exactly as it did before accounts existed.
+      if (isConsole) {
+        const id = accountId();
+        if (id) {
+          try {
+            const res = await fetch(`/s/${sessionToken}/account`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ accountId: id }),
+            });
+            if (res.ok) {
+              const body = (await res.json()) as { consent?: unknown };
+              if (Array.isArray(body.consent)) {
+                seeded = body.consent.filter(
+                  (x): x is string => typeof x === "string",
+                );
+              }
+            }
+          } catch {
+            /* no account this load; the session still works */
+          }
+        }
+      }
       try {
         const res = await fetch(`/s/${sessionToken}/consent`);
         if (res.ok) {
@@ -135,7 +195,10 @@ export function Session() {
           };
           if (body.autonomous === true) setAutonomous(true);
           if (Array.isArray(body.consent)) {
-            seeded = body.consent.filter((x): x is string => typeof x === "string");
+            seeded = unionOrigins(
+              seeded,
+              body.consent.filter((x): x is string => typeof x === "string"),
+            );
           }
         }
       } catch {
@@ -152,7 +215,7 @@ export function Session() {
         ...l,
         {
           kind: "system",
-          text: `pre-granted ${seeded.join(", ")} from session create`,
+          text: `already granted: ${seeded.join(", ")}`,
         },
       ]);
       // Open the first seeded origin so the viewport is not empty and ChatGPT
@@ -227,6 +290,16 @@ export function Session() {
           }
         }
         if (msg.type === "audit") setAudit(msg.rows);
+        if (msg.type === "approval_request" && isConsole) {
+          // A tool call is suspended on the DO waiting for this. The profile
+          // lives here and nowhere else, so this is the only place that can
+          // answer it.
+          void answerApproval(msg, {
+            bless: askBless,
+            resolveFields: (paths) => profileStore.resolve(paths),
+            dismiss: dismissBless,
+          }).then((reply) => bridgeRef.current?.send(reply));
+        }
         if (msg.type === "assistant") {
           setLines((l) => [...l, { kind: "assistant", text: msg.content }]);
           setBusy(false);
@@ -278,7 +351,7 @@ export function Session() {
           })();
         }
       },
-    });
+    }, role);
     bridgeRef.current = bridge;
 
     // Created synchronously so the cleanup below can always abort it, even if
@@ -291,12 +364,10 @@ export function Session() {
         if (!live) return Promise.reject(new Error("no bridge"));
         return live.exec(name, args);
       },
-      resolveFields: (paths) => profileStore.resolve(paths),
-      bless: (req) =>
-        new Promise((resolve) => {
-          blessWait.current = resolve;
-          setBless(req);
-        }),
+      // The façade holds no profile. A fillsFrom tool still registers there;
+      // the DO suspends it and the console supplies the fields.
+      resolveFields: isConsole ? (paths) => profileStore.resolve(paths) : undefined,
+      bless: isConsole ? askBless : undefined,
     });
     registrationRef.current = registration;
     void syncTools(
@@ -344,6 +415,32 @@ export function Session() {
     const registration = registrationRef.current;
     if (registration) await syncTools(registration, next, observedRef.current);
     setLines((l) => [...l, { kind: "system", text: `granted ${origin}` }]);
+    return true;
+  };
+
+  // Mirror of persistConsent: the server is the source of truth, the local
+  // set follows, and the tool registration re-syncs so the origin's tools
+  // unregister immediately. The account write happens DO-side via waitUntil.
+  const revoke = async (origin: string): Promise<boolean> => {
+    const res = await fetch(`/s/${sessionToken}/consent`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ origin }),
+    });
+    if (!res.ok) {
+      setLines((l) => [
+        ...l,
+        { kind: "system", text: `revoke failed for ${origin} (${res.status})` },
+      ]);
+      return false;
+    }
+    const next = new Set(consentedRef.current);
+    next.delete(origin);
+    consentedRef.current = next;
+    setConsented(next);
+    const registration = registrationRef.current;
+    if (registration) await syncTools(registration, next, observedRef.current);
+    setLines((l) => [...l, { kind: "system", text: `revoked ${origin}` }]);
     return true;
   };
 
@@ -475,6 +572,7 @@ export function Session() {
           origins={ORIGINS}
           consented={consented}
           onGrant={(o) => void grant(o)}
+          onRevoke={(o) => void revoke(o)}
           autonomous={autonomous}
           onAutonomous={(on) => {
             setAutonomous(on);
@@ -490,6 +588,31 @@ export function Session() {
             ]);
           }}
         />
+        {isConsole ? (
+          <PasskeyBar
+            sessionToken={sessionToken}
+            onSignedIn={(id) => {
+              // Adopting a different account means different grants. Re-claim
+              // this session under it and take what comes back.
+              void (async () => {
+                const res = await fetch(`/s/${sessionToken}/account`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ accountId: id }),
+                });
+                if (!res.ok) return;
+                const body = (await res.json()) as { consent?: unknown };
+                if (!Array.isArray(body.consent)) return;
+                const next = new Set(
+                  body.consent.filter((x): x is string => typeof x === "string"),
+                );
+                setConsented(next);
+                const reg = registrationRef.current;
+                if (reg) await syncTools(reg, next, observedRef.current);
+              })();
+            }}
+          />
+        ) : null}
         <Surface
           origin={pageOrigin}
           remoteTools={remoteTools}
