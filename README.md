@@ -96,26 +96,35 @@ closes both.
 ## Architecture
 
 Two browsers, and the difference matters. **Yours** just loads a web page,
-with no extension, no flag and no download. ChatGPT's in-app browser is one
-of them.
-**Ours** is a second, remote Chromium that opens the target site, and it is the
+with no extension, no flag and no download. ChatGPT's in-app browser is one of
+them. **Ours** is a second, remote Chromium that opens the target site, and it is the
 one the WebMCP API is installed into.
 
-```
-Your browser, or ChatGPT's in-app browser (nothing installed)
-  │  you open  /c/<token>  (console)
-  │  an agent opens  /s/<token>  (façade)
-  ▼
-The page  ── document.modelContext.registerTool(…, { signal })
-       │                      └──▶ discovered as site tools
-       │  WebSocket: tool_call, approval_request, frame, input
-       ▼
-Session Durable Object (one per session)   ◀── /mcp  JSON-RPC + OAuth 2.1
-  consent · audit log · approval gate · screencast + input relay
-       │  Browser Rendering
-       ▼
-A second, remote Chromium ── Playwright / CDP ──▶ the target site
-  the WebMCP API is installed HERE, before the site's own scripts run
+```mermaid
+flowchart TD
+    subgraph yours["Your browser, or ChatGPT's in-app browser. Nothing installed."]
+        console["console at /c/:token<br/>holds the profile, answers approvals"]
+        facade["facade at /s/:token<br/>what an agent loads"]
+    end
+
+    reg["document.modelContext.registerTool<br/>one AbortController per tool<br/>discovered as site tools"]
+    client["Any MCP client, no UI at all"]
+
+    subgraph cf["Cloudflare Worker"]
+        do["Session Durable Object, one per session<br/>consent, audit log, approval gate,<br/>screencast and input relay"]
+        chromium["A second, remote Chromium<br/>the WebMCP API is installed HERE,<br/>before the site's own scripts run"]
+    end
+
+    site["The target site"]
+
+    console --> reg
+    facade --> reg
+    reg -- "WebSocket: tool_call, frame, input" --> do
+    do -- "approval_request, console sockets only" --> console
+    client -- "/mcp: JSON-RPC, OAuth 2.1 with PKCE" --> do
+    do -- "Browser Rendering" --> chromium
+    chromium -- "Playwright and CDP" --> site
+    site -. "registers its own tools on the injected API" .-> chromium
 ```
 
 So the site's tools run in our browser, and appear in yours.
