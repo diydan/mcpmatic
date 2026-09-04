@@ -236,6 +236,60 @@ describe("handleAuthorize (GET /oauth/authorize) — RFC 6749 §4.1.1 authorizat
     expect(shim.codeFetch).not.toHaveBeenCalled();
   });
 
+  it("consent page shows the redirect host next to the client ID", async () => {
+    const { consent: _c, session_token: _s, ...firstVisit } = VALID_PARAMS;
+    const res = await handleAuthorize(req(firstVisit), shim.env);
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(
+      `<dt>Client ID</dt><dd>${VALID_PARAMS.client_id} <small>(redirects to example.com)</small></dd>`,
+    );
+  });
+
+  it("consent page keeps client ID and redirect URI HTML-escaped", async () => {
+    const clientId = "<client>&";
+    const redirectUri = "https://example.com/cb?x=<tag>&y=1";
+    const escapedShim = makeEnv({
+      [clientId]: { ...CLIENT, clientId, redirectUris: [redirectUri] },
+    });
+    const { consent: _c, session_token: _s, ...firstVisit } = {
+      ...VALID_PARAMS,
+      client_id: clientId,
+      redirect_uri: redirectUri,
+    };
+
+    const res = await handleAuthorize(req(firstVisit), escapedShim.env);
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(
+      `<dt>Client ID</dt><dd>&lt;client&gt;&amp; <small>(redirects to example.com)</small></dd>`,
+    );
+    expect(html).toContain(
+      "<dt>Redirect URI</dt><dd>https://example.com/cb?x=&lt;tag&gt;&amp;y=1</dd>",
+    );
+  });
+
+  it("consent page renders a malformed redirect URI without crashing", async () => {
+    const redirectUri = "not-a-url";
+    const malformedShim = makeEnv({
+      [VALID_PARAMS.client_id]: { ...CLIENT, redirectUris: [redirectUri] },
+    });
+    const { consent: _c, session_token: _s, ...firstVisit } = {
+      ...VALID_PARAMS,
+      redirect_uri: redirectUri,
+    };
+
+    const res = await handleAuthorize(req(firstVisit), malformedShim.env);
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(
+      `<dt>Client ID</dt><dd>${VALID_PARAMS.client_id} <small>(redirects to ${redirectUri})</small></dd>`,
+    );
+  });
+
   it("denied consent (POST consent=deny) → 302 to redirect_uri with error=access_denied + state; no code issued", async () => {
     const res = await handleAuthorize(
       postReq({ ...VALID_PARAMS, consent: "deny" }),
