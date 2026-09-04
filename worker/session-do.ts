@@ -1443,23 +1443,21 @@ export class SessionDO extends DurableObject<Env> {
         `SELECT value FROM meta WHERE key = 'autonomous' LIMIT 1`,
       )
       .toArray()[0];
-    // Absent defaults to off — see autonomousFromStored. The 2026-09-04
-    // security review split `autoGrantNew` out of `autonomous`, and both
-    // flags fail closed by default: a user who wants the agent to roam the
-    // catalog has to flip the consent switch.
+    // Absent means on. See autonomousFromStored for why the default is
+    // automation rather than a grant click per origin.
     return autonomousFromStored(row?.value);
   }
 
   /**
-   * Auto-grant new (non-catalog) origins. Independent of `readAutonomous` —
-   * autonomous-mode catalog grants can be on while this is off, which is the
-   * 2026-09-04 review's M8 default: the model still gets the demo catalog,
-   * but a navigation it decides on by itself to a site we don't know about
-   * must fail closed rather than silently widen the grant set.
+   * Auto-grant new (non-catalog) origins. Independent of `readAutonomous`,
+   * which is the 2026-09-04 review's M9 split and worth keeping: catalog
+   * automation can stay on while off-catalog auto-granting is turned off,
+   * a control that did not exist before the review.
    *
-   * Stored as "0"/"1" alongside `autonomous`. A row that does not exist
-   * counts as "0" — existing sessions pre-dating this split keep the
-   * conservative behaviour.
+   * The review also defaulted it off. That default is reverted — "add WebMCP
+   * to any website" is the product, and a fixed catalog is not it. Stored as
+   * "0"/"1" alongside `autonomous`; an absent row means on, so only a human
+   * who turned it off gets the narrower behaviour.
    */
   private readAutoGrantNew(): boolean {
     const row = this.ctx.storage.sql
@@ -1467,7 +1465,7 @@ export class SessionDO extends DurableObject<Env> {
         `SELECT value FROM meta WHERE key = 'autoGrantNew' LIMIT 1`,
       )
       .toArray()[0];
-    return row?.value === "1";
+    return row?.value !== "0";
   }
 
   private async allowOrigin(origin: string): Promise<boolean> {

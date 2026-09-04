@@ -11,16 +11,22 @@ export function mergeAutonomousConsent(
 /**
  * Whether a session acts without a grant click per origin.
  *
- * The default is **off**. After the 2026-09-04 security review split
- * `autoGrantNew` out of `autonomous`, both flags must fail closed by default:
- * a navigation an agent decides on for itself must not silently widen the
- * grant set. A user who wants the agent to roam the demo catalog has to
- * flip the consent switch.
+ * Automation is the default: an absent row means on. The product is for people
+ * who want an agent to get on with it, and asking permission per origin before
+ * anything has happened is friction without a decision behind it.
  *
- * An explicit "1" turns it on; an explicit "0" keeps it off. An unrecognised
- * value or an absent row is treated as no choice at all and defaults to
- * **off** — the safe choice.
+ * The 2026-09-04 security review set this to fail closed. That was reverted as
+ * a product decision: the boundary that matters is a profile *value* leaving
+ * the device, and that gate is untouched — a tool drawing on the profile still
+ * cannot run unattended. Granting an origin only decides which tools are
+ * listed. The review's structural change is kept: `autoGrantNew` remains a
+ * separate switch, so catalog automation can stay on while off-catalog
+ * auto-granting is turned off. Both simply default on rather than off.
+ *
+ * An explicit "0" outranks the default and survives reloads, because a human
+ * who turned it off has made a choice and a default must not undo it. An
+ * unrecognised value is treated as no choice at all.
  */
 export function autonomousFromStored(value: string | null | undefined): boolean {
-  return value === "1";
+  return value === "0" ? false : true;
 }

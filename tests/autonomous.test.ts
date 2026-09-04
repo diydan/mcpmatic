@@ -22,13 +22,13 @@ describe("mergeAutonomousConsent", () => {
 });
 
 describe("autonomousFromStored", () => {
-  it("is off when the session has never been told otherwise", () => {
-    // Fails closed by default: a fresh session does not act without a grant
-    // click per origin. The 2026-09-04 security review split autoGrantNew
-    // out of autonomous, and both flags must default off so a navigation
-    // an agent decides on for itself does not silently widen the grant set.
-    expect(autonomousFromStored(undefined)).toBe(false);
-    expect(autonomousFromStored(null)).toBe(false);
+  it("is on when the session has never been told otherwise", () => {
+    // Automation is the default: a fresh session should act without asking for
+    // a grant click per origin. The 2026-09-04 security review defaulted this
+    // off; that was reverted as a product decision. The gate that matters —
+    // a profile value leaving the device — is a separate mechanism and stays.
+    expect(autonomousFromStored(undefined)).toBe(true);
+    expect(autonomousFromStored(null)).toBe(true);
   });
 
   it("stays off when a human turned it off", () => {
@@ -40,10 +40,10 @@ describe("autonomousFromStored", () => {
     expect(autonomousFromStored("1")).toBe(true);
   });
 
-  it("falls back to off for a value it does not recognise", () => {
-    // An unrecognised value is treated as no choice at all and defaults
-    // to off — the safe choice.
-    expect(autonomousFromStored("")).toBe(false);
-    expect(autonomousFromStored("yes")).toBe(false);
+  it("falls back to the default for a value it does not recognise", () => {
+    // An unrecognised value is treated as no choice at all, so the default
+    // applies. Only an explicit "0" turns automation off.
+    expect(autonomousFromStored("")).toBe(true);
+    expect(autonomousFromStored("yes")).toBe(true);
   });
 });

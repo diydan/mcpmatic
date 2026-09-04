@@ -234,9 +234,12 @@ describe("SessionDO consent — grant/revoke round trip", () => {
  *   `autonomous`     — catalog origins are auto-granted as soon as the
  *                      session is set up.
  *   `autoGrantNew`   — origins *outside* the catalog are auto-granted
- *                      only when this is on. Off by default.
- * The split exists so that turning autonomous on does not silently widen
- * the grant set to every site ChatGPT navigates to (M9).
+ *                      only when this is on.
+ * The split exists so the two can be controlled separately (M9): catalog
+ * automation can stay on while off-catalog auto-granting is turned off.
+ * Both default to **on** — automation is the product default, and the gate
+ * that matters is a profile value leaving the device, not which tools are
+ * listed. Only an explicit "0" narrows either one.
  *
  * `allowOrigin` is private; we reach it via the same `as unknown` cast
  * the rest of this file uses for internal access. The function returns
@@ -284,9 +287,18 @@ describe("SessionDO autonomous — autoGrantNew gate (M9)", () => {
     expect(await allowOrigin(offCatalogOrigin)).toBe(true);
   });
 
-  it("autonomous off: nothing is auto-granted, even on the catalog", async () => {
+  it("a fresh session auto-grants both, because automation is the default", async () => {
     await do_.initSession("t".repeat(64));
-    // Do NOT call setAutonomous — the default is off.
+    // Do NOT call setAutonomous. An absent row means on for both flags, so a
+    // session nobody has configured acts rather than asking per origin.
+    expect(await allowOrigin(catalogOrigin)).toBe(true);
+    expect(await allowOrigin(offCatalogOrigin)).toBe(true);
+  });
+
+  it("autonomous explicitly off: nothing is auto-granted, even on the catalog", async () => {
+    await do_.initSession("t".repeat(64));
+    // An explicit choice outranks the default and must survive.
+    await do_.setAutonomous(false);
     expect(await allowOrigin(catalogOrigin)).toBe(false);
     expect(await allowOrigin(offCatalogOrigin)).toBe(false);
     const { consent } = await do_.listConsent();
