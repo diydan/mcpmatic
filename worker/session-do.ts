@@ -31,7 +31,10 @@ import {
 } from "./agent";
 import { MANIFESTS, manifestFor } from "./manifests";
 import type { ToolManifest } from "../shared/manifest";
-import { mergeAutonomousConsent } from "../shared/autonomous";
+import {
+  autonomousFromStored,
+  mergeAutonomousConsent,
+} from "../shared/autonomous";
 import { buildToolList } from "./mcp/tools";
 import {
   callNativeTool,
@@ -1291,7 +1294,8 @@ export class SessionDO extends DurableObject<Env> {
         `SELECT value FROM meta WHERE key = 'autonomous' LIMIT 1`,
       )
       .toArray()[0];
-    return row?.value === "1";
+    // Absent means on. See autonomousFromStored.
+    return autonomousFromStored(row?.value);
   }
 
   private async allowOrigin(origin: string): Promise<boolean> {

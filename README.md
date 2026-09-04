@@ -112,12 +112,19 @@ Choices worth stating, because they are the load-bearing ones:
   will not carry a session cookie. A high-entropy token in the path, short TTL,
   one active browser binding, revocable by `DELETE`. Never in a query string,
   and the response sends `Referrer-Policy: no-referrer`.
-- **Consent gates registration, not just the chat panel.** ChatGPT's permission
-  model is per-site; a façade that fans out to arbitrary origins would route
-  around it. So: origin-qualified names (`search_flights_on_kayak_com`, never
-  `search_flights`), and no `registerTool` for an origin until the human grants
-  it. The permission model is extended to sites that cannot declare tools yet,
-  not bypassed.
+- **Origin-qualified names, always.** ChatGPT's permission model is per-site,
+  so a tool is `search_flights_on_kayak_com`, never `search_flights`. A name
+  says which origin it reaches, on every surface.
+- **Automation is the default; the grant click is the option.** Autonomous mode
+  is on unless a human turns it off: every demo origin is granted, and a site
+  you or the agent opens is granted as it opens. Turn it off and no
+  `registerTool` happens for an origin until you grant it, one at a time. The
+  switch is in the console and the choice survives reloads.
+
+  These are two different consents and only one of them moved. Granting an
+  *origin* is now automatic. Releasing a *profile field* is not: a tool that
+  draws on your name or address still suspends until you approve it by name,
+  and with no console attached it refuses rather than filling blanks.
 - **An audit table with no value column.** Rows are `{origin, tool,
   fieldNames[], timestamp}`. "We don't log it" is a policy; "there is nowhere to
   log it" is an architecture.
