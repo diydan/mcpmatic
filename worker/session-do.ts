@@ -11,7 +11,8 @@ import {
 import { runSteps } from "./steps";
 import { originSlug } from "../shared/origin";
 import { isPrivateUrl } from "./is-private-url";
-import { makeResolve4 } from "./doh-resolve4";
+import { makeResolve4, makeResolve4Records } from "./doh-resolve4";
+import { navigationStable } from "./navigation-stable";
 import {
   dispatchKey,
   dispatchMouse,
@@ -912,6 +913,8 @@ export class SessionDO extends DurableObject<Env> {
       if (target && originFromUrl(live.page.url()) !== originFromUrl(target)) {
         const blocked = await isPrivateUrl(target, makeResolve4());
         if (blocked) return { ok: false, text: "navigation refused (ssrf)" };
+        const stable = await navigationStable(target, makeResolve4Records());
+        if (!stable.ok) return { ok: false, text: "navigation refused (ssrf)" };
         await live.page.goto(target, {
           waitUntil: "domcontentloaded",
           timeout: 30_000,
@@ -936,6 +939,8 @@ export class SessionDO extends DurableObject<Env> {
       const target = String(args.origin ?? args.url ?? "");
       const blocked = await isPrivateUrl(target, makeResolve4());
       if (blocked) return { ok: false, text: "navigation refused (ssrf)" };
+      const stable = await navigationStable(target, makeResolve4Records());
+      if (!stable.ok) return { ok: false, text: "navigation refused (ssrf)" };
       const dest = originFromUrl(target);
       if (!(await this.allowOrigin(dest))) {
         return { ok: false, text: "origin not consented" };
@@ -1053,6 +1058,8 @@ export class SessionDO extends DurableObject<Env> {
     if (originFromUrl(live.page.url()) !== manifest.origin) {
       const blocked = await isPrivateUrl(manifest.origin, makeResolve4());
       if (blocked) return { ok: false, text: "navigation refused (ssrf)" };
+      const stable = await navigationStable(manifest.origin, makeResolve4Records());
+      if (!stable.ok) return { ok: false, text: "navigation refused (ssrf)" };
       await live.page.goto(manifest.origin, {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
@@ -1116,6 +1123,8 @@ export class SessionDO extends DurableObject<Env> {
   private async gotoGuarded(live: LiveBrowser, url: string): Promise<void> {
     const blocked = await isPrivateUrl(url, makeResolve4());
     if (blocked) throw new Error("navigation refused (ssrf)");
+    const stable = await navigationStable(url, makeResolve4Records());
+    if (!stable.ok) throw new Error("navigation refused (ssrf)");
     await live.page.goto(url, {
       waitUntil: "domcontentloaded",
       timeout: 30_000,

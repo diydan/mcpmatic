@@ -39,6 +39,23 @@ const DOH_TIMEOUT_MS = 2_000;
 const DNS_TYPE_A = 1;
 const DNS_TYPE_AAAA = 28;
 
+/**
+ * Floor below which a short-TTL attack is feasible. A resolver that flips a
+ * record inside 30 s is exactly the rebind window we fear; refusing anything
+ * lower forces the attacker to commit to the address they give us for the
+ * full navigation window. (Review H2.)
+ */
+export const MIN_TTL_SECONDS = 30;
+
+/** One address record as returned by `makeResolve4Records`. */
+export type ResolvedRecord = { ip: string; ttl: number };
+
+/** Resolve a hostname to all of its (TTL-filtered) A and AAAA records. */
+export type Resolve4Records = (hostname: string) => Promise<ResolvedRecord[]>;
+
+/** Legacy: just the IPs, dropping TTLs. */
+export type Resolve4 = (hostname: string) => Promise<string[]>;
+
 /** Shape of one entry in a Cloudflare DoH JSON `Answer` array. */
 interface DoHAnswer {
   name?: string;
@@ -55,14 +72,12 @@ interface DoHResponse {
   [key: string]: unknown;
 }
 
-export type Resolve4 = (hostname: string) => Promise<string[]>;
-
 async function queryDoH(
   fetchFn: typeof fetch,
   endpoint: string,
   hostname: string,
   recordType: "A" | "AAAA",
-): Promise<string[]> {
+): Promise<ResolvedRecord[]> {
   const url = `${endpoint}?name=${encodeURIComponent(hostname)}&type=${recordType}`;
 
   const res = await fetchFn(url, {
@@ -101,18 +116,24 @@ async function queryDoH(
   // anything that isn't a parseable IPv4/IPv6 literal.
   // `.trim()` defends against a (theoretical) malformed data field with
   // leading/trailing whitespace that would slip the parse.
+  //
+  // TTL floor: a sub-MIN_TTL_SECONDS answer is exactly the rebind window.
+  // Refusing it forces the attacker to commit to the address for the full
+  // navigation window. Records without a TTL are likewise dropped — an
+  // attacker would love us to ignore the timing channel.
   return body.Answer
     .filter(
       (a): a is DoHAnswer & { data: string } =>
         a.type === wantType && typeof a.data === "string",
     )
-    .map((a) => a.data.trim());
+    .filter((a) => (a.TTL ?? 0) >= MIN_TTL_SECONDS)
+    .map((a) => ({ ip: a.data.trim(), ttl: a.TTL ?? 0 }));
 }
 
 /**
- * Build a `resolve4(hostname)` function backed by Cloudflare DoH.
+ * Build a `resolve4Records(hostname)` function backed by Cloudflare DoH.
  *
- * Despite the name, this returns **both** A and AAAA addresses, so dual-stack
+ * Despite the name, this returns **both** A and AAAA records, so dual-stack
  * rebind attacks are visible to `isPrivateUrl`.
  *
  * @param fetchFn - injectable `fetch` (default: the global). Tests pass a
@@ -120,11 +141,11 @@ async function queryDoH(
  * @param endpoint - injectable DoH endpoint (default: Cloudflare). Reserved
  *   for an override such as an internal resolver; not wired to config yet.
  */
-export function makeResolve4(
+export function makeResolve4Records(
   fetchFn: typeof fetch = fetch,
   endpoint: string = DOH_ENDPOINT,
-): Resolve4 {
-  return async (hostname: string): Promise<string[]> => {
+): Resolve4Records {
+  return async (hostname: string): Promise<ResolvedRecord[]> => {
     // Parallel A + AAAA: wall time stays ~one RTT; either failure fails
     // the whole resolution (fail-closed — isPrivateUrl rejects).
     const [v4, v6] = await Promise.all([
@@ -133,4 +154,17 @@ export function makeResolve4(
     ]);
     return [...v4, ...v6];
   };
+}
+
+/**
+ * Build a `resolve4(hostname)` that returns only the IP strings, dropping
+ * TTL. Kept for callers that don't need the timing channel.
+ */
+export function makeResolve4(
+  fetchFn: typeof fetch = fetch,
+  endpoint: string = DOH_ENDPOINT,
+): Resolve4 {
+  const records = makeResolve4Records(fetchFn, endpoint);
+  return async (hostname: string): Promise<string[]> =>
+    (await records(hostname)).map((r) => r.ip);
 }
