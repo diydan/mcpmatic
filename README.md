@@ -178,8 +178,9 @@ started on the first grant and released when you leave.
 
 Two models. A small one answers each turn; if it produces arguments the
 tool's own schema rejects, the larger one gets one retry at the same turn.
-Chaining turns start on the larger one. Both default to `openai/gpt-5.5`, so
-escalation is inert until `MODEL_HARD` names a bigger model. `OPENAI_MODEL`
+Chaining turns start on the larger one. Luna and Sol by default, the cost-optimised
+and frontier members of the gpt-5.6 family, which speak the Responses API
+rather than Chat Completions. `OPENAI_MODEL`
 pins a single model for every turn.
 
 No API key is required. The optional in-page chat panel reaches a model through
