@@ -21,6 +21,12 @@ export type RegistryEntry = {
 export type KvLike = {
   get: (key: string) => Promise<string | null>;
   put: (key: string, value: string) => Promise<void>;
+  /**
+   * Required, not optional. `declineTool` is the revoke path and must be able
+   * to remove the `tool:<name>` lookup key; a KV that cannot delete would
+   * revoke in the listing and not in fact.
+   */
+  delete: (key: string) => Promise<void>;
 };
 
 /**
@@ -169,5 +175,11 @@ export async function declineTool(
   );
   const next: RegistryEntry = { tools };
   await kv.put(originKey(origin), JSON.stringify(next));
+  // Decline is also the revoke path: a tool approved earlier already has a
+  // `tool:<name>` key, and `getApprovedManifestByName` resolves from that key
+  // alone without re-reading the per-origin status. Leaving it behind would
+  // show the tool as declined in every listing while it stayed callable by
+  // name. Deleting an absent key is a no-op, so a first refusal costs nothing.
+  await kv.delete(toolKey(name));
   return next;
 }

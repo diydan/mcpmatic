@@ -122,12 +122,24 @@ export function responsesBody(
     instructions,
     input,
     max_output_tokens: 1024,
-    tools: tools.map((t) => ({
-      type: "function",
-      name: t.name,
-      description: t.description,
-      parameters: t.inputSchema,
-    })),
+    // Omitted entirely when empty rather than sent as `tools: []`.
+    // OpenAI-compatible endpoints have historically rejected an empty array
+    // with `Invalid 'tools': empty array`, and manifest generation is the
+    // first caller that passes one — every other caller sends the non-empty
+    // SPINE list. The tests stub `env.AI.run` and never read the body, so if
+    // the gateway forwards it verbatim, generation fails in production while
+    // every test still passes. Costs nothing if the endpoint would have
+    // accepted it.
+    ...(tools.length
+      ? {
+          tools: tools.map((t) => ({
+            type: "function",
+            name: t.name,
+            description: t.description,
+            parameters: t.inputSchema,
+          })),
+        }
+      : {}),
   };
 }
 
@@ -232,14 +244,21 @@ function requestBody(
 ): Record<string, unknown> {
   return {
     messages,
-    tools: tools.map((t) => ({
-      type: "function" as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.inputSchema,
-      },
-    })),
+    // Omitted when empty for the same reason as responsesBody: an empty
+    // array is rejected by some OpenAI-compatible endpoints, and manifest
+    // generation is the only caller that sends one.
+    ...(tools.length
+      ? {
+          tools: tools.map((t) => ({
+            type: "function" as const,
+            function: {
+              name: t.name,
+              description: t.description,
+              parameters: t.inputSchema,
+            },
+          })),
+        }
+      : {}),
     ...(model ? { model } : {}),
   };
 }

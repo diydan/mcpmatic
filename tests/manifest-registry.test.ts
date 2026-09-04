@@ -23,6 +23,7 @@ function fakeKv(store: Record<string, string>): KvLike {
   return {
     get: vi.fn(async (key: string) => store[key] ?? null),
     put: vi.fn(async () => {}),
+    delete: vi.fn(async () => {}),
   };
 }
 
@@ -92,6 +93,9 @@ function writableKv(store: Record<string, string>): KvLike {
     put: vi.fn(async (key: string, value: string) => {
       store[key] = value;
     }),
+    delete: vi.fn(async (key: string) => {
+      delete store[key];
+    }),
   };
 }
 
@@ -132,7 +136,11 @@ describe("approveTool", () => {
   });
 
   it("returns null when the origin has no entry", async () => {
-    const kv: KvLike = { get: vi.fn(async () => null), put: vi.fn(async () => {}) };
+    const kv: KvLike = {
+      get: vi.fn(async () => null),
+      put: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    };
     expect(await approveTool(kv, "https://example.com", TOOL.name)).toBeNull();
   });
 
@@ -161,8 +169,31 @@ describe("declineTool", () => {
     expect(store[`tool:${TOOL.name}`]).toBeUndefined();
   });
 
+  it("deletes the tool: key when declining a tool that was already approved", async () => {
+    // Decline is the revoke path, not just a first refusal. `manifestFor`
+    // resolves a name straight from `tool:<name>` and never re-reads the
+    // per-origin status, so leaving that key behind would keep a revoked
+    // tool callable by name while the listing showed it as declined.
+    const store: Record<string, string> = {
+      "origin:https://example.com": JSON.stringify({
+        tools: [{ manifest: TOOL, status: "draft", generatedAt: 1 }],
+      } satisfies RegistryEntry),
+    };
+    const kv = writableKv(store);
+    await approveTool(kv, "https://example.com", TOOL.name);
+    expect(store[`tool:${TOOL.name}`]).toBeDefined();
+
+    const entry = await declineTool(kv, "https://example.com", TOOL.name);
+    expect(entry?.tools[0].status).toBe("declined");
+    expect(store[`tool:${TOOL.name}`]).toBeUndefined();
+  });
+
   it("returns null when the origin has no entry", async () => {
-    const kv: KvLike = { get: vi.fn(async () => null), put: vi.fn(async () => {}) };
+    const kv: KvLike = {
+      get: vi.fn(async () => null),
+      put: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    };
     expect(await declineTool(kv, "https://example.com", TOOL.name)).toBeNull();
   });
 });

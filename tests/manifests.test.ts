@@ -15,6 +15,7 @@ function fakeKv(store: Record<string, string>): KvLike {
   return {
     get: vi.fn(async (key: string) => store[key] ?? null),
     put: vi.fn(async () => {}),
+    delete: vi.fn(async () => {}),
   };
 }
 

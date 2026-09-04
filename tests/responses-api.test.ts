@@ -49,6 +49,16 @@ describe("responsesBody", () => {
     });
   });
 
+  it("omits tools entirely when there are none, rather than sending []", () => {
+    // Manifest generation is the only caller that passes an empty list, and
+    // OpenAI-compatible endpoints have rejected `tools: []` with
+    // `Invalid 'tools': empty array`. Every other test stubs env.AI.run and
+    // never reads the body, so without this the failure would only appear
+    // in production.
+    const body = responsesBody(messages, []) as Record<string, unknown>;
+    expect("tools" in body).toBe(false);
+  });
+
   it("carries a tool result back as function_call_output", () => {
     const withResult = [
       ...messages,
