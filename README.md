@@ -35,9 +35,9 @@ moment.](docs/images/console.png)
 Any https origin works, not a fixed list. `inspect_site` reports what the page
 actually exposes: its own WebMCP tools if it publishes any, otherwise the
 forms, search actions and controls it does have. On Hacker News that is
-`GET //hn.algolia.com/ (q)`; on GOV.UK, `GET /search/all (keywords)`. Turning
-those into callable tools is the next phase
-(`docs/design/2026-09-04-generated-tools-design.md`).
+`GET //hn.algolia.com/ (q)`; on GOV.UK, `GET /search/all (keywords)`. Today those
+are inspectable but not directly callable; making them callable is on the
+roadmap.
 
 In ChatGPT desktop use **GPT-5.6 Sol or Terra**. Luna has WebMCP disabled, and
 Enterprise/Edu workspaces have no site tools. Give it the `/s/<token>` URL.

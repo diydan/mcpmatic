@@ -1,7 +1,7 @@
 # Connecting MCP clients
 
-Tests below are run by hand against real MCP-capable clients. Each row in the
-decision matrix at the bottom determines the next phase of work.
+Tests below are run by hand against real MCP-capable clients. The decision
+matrix at the bottom captures compatibility status as of each test run.
 
 ## How to run a manual test
 

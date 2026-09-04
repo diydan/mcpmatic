@@ -26,5 +26,5 @@ SPRINT.md
 .worktrees/
 
 # Agent execution plans. Scaffolding for how work got done, not documentation
-# of what was built; the design records live in docs/design/.
+# of what was built.
 docs/superpowers/
