@@ -456,8 +456,20 @@ export class SessionDO extends DurableObject<Env> {
    * for granted origins.
    */
   async listTools(): Promise<ToolSchema[]> {
-    const consented = new Set(this.readConsent());
+    // Autonomous grants an origin at call time, which made the catalog
+    // callable but not discoverable: an MCP client listed five spine tools,
+    // never learned the merchant tools existed, and so never called them. The
+    // listing has to agree with what a call would allow, and the façade
+    // already merges the same way client-side.
+    const consented = new Set(this.listingOrigins());
     return (await buildToolList(consented, this.env.MANIFEST_REGISTRY)) as unknown as ToolSchema[];
+  }
+
+  /** Origins a tool may be listed for: granted, plus the catalog when autonomous. */
+  private listingOrigins(): string[] {
+    const granted = this.readConsent();
+    if (!this.readAutonomous()) return granted;
+    return mergeAutonomousConsent(granted, MANIFESTS.map((m) => m.origin));
   }
 
   /**
