@@ -24,7 +24,7 @@ import {
 import { Surface } from "../components/Surface";
 import { profileStore, seedIfEmpty } from "../lib/profile-store";
 import { answerApproval } from "../lib/approval-reply";
-import { accountId } from "../lib/account-store";
+import { accountId, claimWithStepUp } from "../lib/account-store";
 import { PasskeyBar } from "../components/PasskeyBar";
 import { unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
@@ -161,22 +161,19 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
       // already carries come back before we read consent. A session that was
       // never claimed, or a browser with no storage, simply skips this and
       // behaves exactly as it did before accounts existed.
+      //
+      // The claim is bound to a fresh WebAuthn assertion over a passkey
+      // registered to the account — knowledge of the session URL is not
+      // enough on its own. A user without a passkey for this account
+      // (typically a fresh console with a generated id) still gets a working
+      // session; they just do not inherit grants until they register one.
       if (isConsole) {
         const id = accountId();
         if (id) {
           try {
-            const res = await fetch(`/s/${sessionToken}/account`, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ accountId: id }),
-            });
-            if (res.ok) {
-              const body = (await res.json()) as { consent?: unknown };
-              if (Array.isArray(body.consent)) {
-                seeded = body.consent.filter(
-                  (x): x is string => typeof x === "string",
-                );
-              }
+            const claimed = await claimWithStepUp(sessionToken, id);
+            if (claimed.ok) {
+              seeded = claimed.consent;
             }
           } catch {
             /* no account this load; the session still works */
@@ -583,19 +580,14 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             sessionToken={sessionToken}
             onSignedIn={(id) => {
               // Adopting a different account means different grants. Re-claim
-              // this session under it and take what comes back.
+              // this session under it and take what comes back. Step-up is
+              // required: the login that produced this id already proved
+              // possession of an authenticator, and step-up proves it again
+              // against the new account/session binding.
               void (async () => {
-                const res = await fetch(`/s/${sessionToken}/account`, {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ accountId: id }),
-                });
-                if (!res.ok) return;
-                const body = (await res.json()) as { consent?: unknown };
-                if (!Array.isArray(body.consent)) return;
-                const next = new Set(
-                  body.consent.filter((x): x is string => typeof x === "string"),
-                );
+                const claimed = await claimWithStepUp(sessionToken, id);
+                if (!claimed.ok) return;
+                const next = new Set(claimed.consent);
                 setConsented(next);
                 const reg = registrationRef.current;
                 if (reg) await syncTools(reg, next, observedRef.current);

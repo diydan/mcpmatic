@@ -58,6 +58,7 @@ import {
 import { parseBridgeRole } from "./bridge-role";
 import { claimDecision } from "./account";
 import { toAuditRows, type StoredAuditRow } from "./audit-rows";
+import { takeStepUp } from "./passkey-challenge";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 /**
@@ -326,6 +327,11 @@ export class SessionDO extends DurableObject<Env> {
    * anything already granted, and the account learns those grants too. First
    * claim wins — the token is a bearer credential, so a second account must
    * not be able to bind it and inherit the list.
+   *
+   * Kept as the implementation that the worker used before step-up existed.
+   * `claimAccountWithStepUp` is the front door now; this one is unreachable
+   * from any route, so it stays as a non-credential assertion path for tests
+   * and any future caller that has already proven possession another way.
    */
   async claimAccount(
     accountId: string,
@@ -344,6 +350,30 @@ export class SessionDO extends DurableObject<Env> {
     this.writeConsent(grants);
     this.sendState();
     return { ok: true, consent: grants };
+  }
+
+  /**
+   * Bind this session to an account, but only after a step-up token minted by
+   * a fresh WebAuthn assertion proves the caller controls an authenticator
+   * registered to that account *and* the session whose URL they hold.
+   *
+   * The token is the only thing the worker forwards from the request: this
+   * method re-binds it against the session's own token (rejects cross-session
+   * replay) and against the requested accountId (rejects cross-account
+   * replay). On a match, the same `claimAccount` logic runs.
+   */
+  async claimAccountWithStepUp(
+    accountId: string,
+    stepUpToken: string,
+  ): Promise<{ ok: boolean; consent?: string[]; error?: string }> {
+    const sessionToken = this.sessionToken();
+    if (!sessionToken) return { ok: false, error: "no session" };
+    const taken = await takeStepUp(this.env.OAUTH_TOKENS, stepUpToken, {
+      accountId,
+      sessionToken,
+    });
+    if (!taken) return { ok: false, error: "step-up invalid" };
+    return this.claimAccount(accountId);
   }
 
   private sessionToken(): string | null {
