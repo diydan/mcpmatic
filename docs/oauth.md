@@ -2,11 +2,12 @@
 
 # OAuth 2.1 at `/mcp`
 
-Phase 1 shipped bearer-token auth at `/mcp` — a high-entropy 64-hex session
-token that ChatGPT and Claude paste into their MCP server config. Phase 1.5
-adds a spec-compliant OAuth 2.1 surface so any compliant MCP client can
-register itself, drive a hosted consent page, and acquire its own access
-token. Both shapes are accepted at `/mcp`; nothing existing breaks.
+Two bearer shapes are accepted at `/mcp`. The original — a high-entropy
+64-hex session token that ChatGPT and Claude paste into their MCP server
+config — still works exactly as it did. A spec-compliant OAuth 2.1 surface
+sits alongside it so any compliant MCP client can register itself, drive a
+hosted consent page, and acquire its own access token. Both shapes are
+accepted at `/mcp`; nothing existing breaks.
 
 ### Routes
 
@@ -23,9 +24,9 @@ token. Both shapes are accepted at `/mcp`; nothing existing breaks.
 sees the request. Disambiguation is by length and charset, not by a
 `WWW-Authenticate` round-trip:
 
-1. **64 hex chars** (case-insensitive) — Phase 1 session token. Pass-through
+1. **64 hex chars** (case-insensitive) — session token. Pass-through
    to the SessionDO. No KV lookup; the bearer IS the session.
-2. **43 base64url chars** — Phase 1.5 OAuth access token. Resolved via
+2. **43 base64url chars** — OAuth access token. Resolved via
    `OAUTH_TOKENS.get("token:<access_token>")`. The stored payload carries
    the original `userSessionToken`, which is what `/mcp` hands to the
    SessionDO. `expiresAt` is a second-line defense on top of KV's
@@ -34,8 +35,8 @@ sees the request. Disambiguation is by length and charset, not by a
    tried.
 
 This is what lets a single Worker URL (`https://<host>/mcp`) work for both
-the Phase 1 "paste a session token" clients and Phase 1.5's full OAuth
-clients without any per-deployment config.
+"paste a session token" clients and full OAuth clients without any
+per-deployment config.
 
 ### PKCE S256 is mandatory
 
