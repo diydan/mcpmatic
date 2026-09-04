@@ -57,6 +57,15 @@ importers:
       happy-dom:
         specifier: ^20.12.0
         version: 20.12.0
+      hast-util-sanitize:
+        specifier: ^5.0.2
+        version: 5.0.2
+      mdast-util-from-markdown:
+        specifier: ^2.0.2
+        version: 2.0.3
+      mdast-util-to-hast:
+        specifier: ^13.2.0
+        version: 13.2.1
       playwright:
         specifier: ^1.62.1
         version: 1.62.1
