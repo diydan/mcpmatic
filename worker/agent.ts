@@ -1,4 +1,5 @@
 import type { ToolSchema } from "../shared/protocol";
+import { checkArgs } from "./schema-check";
 
 export type ChatTurn = {
   role: "system" | "user" | "assistant" | "tool";
@@ -92,28 +93,17 @@ export function chooseModel(
 }
 
 function needsHardModel(
-  tools: readonly ToolSchema[],
+  _tools: readonly ToolSchema[],
   messages: readonly ChatTurn[],
 ): boolean {
-  const toolResults = messages.filter((m) => m.role === "tool").length;
-  if (toolResults >= CHAINING_AFTER) return true;
-  return tools.some((t) => hasNestedRequired(t.inputSchema));
+  // Only chaining is knowable before the call. "Does any offered tool nest"
+  // looked useful and is not: with a catalog granted, 4 of 16 tools nest, so
+  // it fires on every turn and the small model is never used. The model picks
+  // one tool, and which one it picks is the thing we cannot know in advance —
+  // so nesting is judged after the fact, in runTurn.
+  return messages.filter((m) => m.role === "tool").length >= CHAINING_AFTER;
 }
 
-/** A required field that is itself an object with required fields of its own. */
-function hasNestedRequired(schema: unknown, depth = 0): boolean {
-  if (depth > 4 || !schema || typeof schema !== "object") return false;
-  const s = schema as {
-    properties?: Record<string, unknown>;
-    required?: unknown;
-  };
-  for (const value of Object.values(s.properties ?? {})) {
-    const child = value as { required?: unknown; properties?: unknown };
-    if (Array.isArray(child?.required) && child.required.length) return true;
-    if (hasNestedRequired(child, depth + 1)) return true;
-  }
-  return false;
-}
 
 
 const SYSTEM = `You operate websites through WebMCP tools registered on this page.
@@ -201,7 +191,29 @@ export async function runTurn(
   messages: ChatTurn[],
   tools: ToolSchema[],
 ): Promise<AgentDecision> {
-  const model = chooseModel(env, tools, messages);
+  const first = await callModel(env, chooseModel(env, tools, messages), messages, tools);
+  // Escalate only on evidence. If the small model produced arguments the
+  // tool's own schema rejects, the larger one gets one attempt at the same
+  // turn. Retrying at most once keeps a bad turn from costing three calls.
+  const hard = env.MODEL_HARD;
+  if (!hard || env.OPENAI_MODEL || argumentsFit(first, tools)) return first;
+  return callModel(env, hard, messages, tools);
+}
+
+/** Did the model's tool call satisfy the schema that tool declares? */
+function argumentsFit(decision: AgentDecision, tools: readonly ToolSchema[]): boolean {
+  if (decision.kind !== "tool") return true; // a plain reply has nothing to get wrong
+  const tool = tools.find((t) => t.name === decision.name);
+  if (!tool) return true; // an unknown tool name is a different failure
+  return checkArgs(tool.inputSchema, decision.arguments).ok;
+}
+
+async function callModel(
+  env: ModelEnv,
+  model: string,
+  messages: ChatTurn[],
+  tools: ToolSchema[],
+): Promise<AgentDecision> {
 
   if (env.AI) {
     // The binding takes `{author}/{model}`; the model goes in the first

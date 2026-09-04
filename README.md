@@ -174,10 +174,10 @@ pnpm run deploy   # `pnpm deploy` is pnpm's own workspace command, not this scri
 Browser Rendering must be enabled on the account. One browser per session,
 started on the first grant and released when you leave.
 
-Two models, chosen per turn: a small one for picking a tool with flat
-arguments, a larger one when a tool nests its required fields or the turn is
-already chaining. Set `MODEL_EASY` and `MODEL_HARD` to change them, or
-`OPENAI_MODEL` to pin a single model for every turn.
+Two models. A small one answers each turn; if it produces arguments the
+tool's own schema rejects, the larger one gets one retry at the same turn.
+Chaining turns start on the larger one. Set `MODEL_EASY` and `MODEL_HARD`,
+or `OPENAI_MODEL` to pin a single model for every turn.
 
 No API key is required. The optional in-page chat panel reaches a model through
 the Cloudflare `ai` binding; drop that binding and set `OPENAI_API_KEY` to call
