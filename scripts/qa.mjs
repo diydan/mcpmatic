@@ -1,6 +1,6 @@
 /**
  * QA smoke for the hosted-UI any-URL feature against
- * https://mcpmatic.dan-3c7.workers.dev.
+ * https://browsermatic.dev.
  *
  * Drives Chromium headless via Playwright. Covers the Home page
  * (Header presence, disabled state, valid/invalid submissions,
@@ -16,7 +16,7 @@ import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-const BASE = "https://mcpmatic.dan-3c7.workers.dev";
+const BASE = "https://browsermatic.dev";
 const SHOTS = new URL("./qa-screenshots/", import.meta.url).pathname;
 mkdirSync(SHOTS, { recursive: true });
 
