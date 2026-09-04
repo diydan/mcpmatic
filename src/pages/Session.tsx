@@ -12,6 +12,7 @@ import { ChatPanel } from "../components/ChatPanel";
 import { Viewport } from "../components/Viewport";
 import { Consent } from "../components/Consent";
 import { ApprovalDialog } from "../components/ApprovalDialog";
+import { ManifestReview, type ManifestDraft } from "../components/ManifestReview";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Header } from "../components/Header";
 import { openBridge } from "../lib/bridge";
@@ -105,6 +106,8 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
   const [autonomous, setAutonomous] = useState(false);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const approvalWait = useRef<((ok: boolean) => void) | null>(null);
+  const [manifestDraft, setManifestDraft] = useState<ManifestDraft | null>(null);
+  const [mapSiteBusy, setMapSiteBusy] = useState(false);
   /**
    * One dialog at a time. A second request arriving while one is open is
    * denied rather than replacing it — replacing would strand whoever is
@@ -367,6 +370,13 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           if (msg.type === "error") {
             setLines((l) => [...l, { kind: "system", text: msg.message }]);
             setBusy(false);
+            setMapSiteBusy(false);
+          }
+          if (msg.type === "manifest_draft") {
+            setMapSiteBusy(false);
+            setManifestDraft(
+              msg.tools.length > 0 ? { origin: msg.origin, tools: msg.tools } : null,
+            );
           }
           if (msg.type === "tool_call") {
             setLines((l) => [
@@ -764,6 +774,19 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
               remoteTools={remoteTools}
               registered={tools}
               onOffer={(name) => void runOffer(name)}
+              mapSiteBusy={mapSiteBusy}
+              onMapSite={
+                pageOrigin
+                  ? () => {
+                      setMapSiteBusy(true);
+                      bridgeRef.current?.send({
+                        v: 1,
+                        type: "generate_manifest",
+                        origin: pageOrigin,
+                      });
+                    }
+                  : undefined
+              }
             />
           </div>
         )}
@@ -774,6 +797,19 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           approvalWait.current?.(ok);
           approvalWait.current = null;
           setApproval(null);
+        }}
+      />
+      <ManifestReview
+        draft={manifestDraft}
+        onDecide={(name, ok) => {
+          if (!manifestDraft) return;
+          bridgeRef.current?.send({
+            v: 1,
+            type: "manifest_decision",
+            origin: manifestDraft.origin,
+            name,
+            bless: ok,
+          });
         }}
       />
     </div>

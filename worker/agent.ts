@@ -139,6 +139,9 @@ export function responsesBody(
  */
 export function decideResponses(raw: unknown): AgentDecision {
   const output = (raw as { output?: unknown })?.output;
+  if (!output && (raw as { choices?: unknown })?.choices) {
+    return decide(raw);
+  }
   const items = Array.isArray(output) ? output : [];
 
   for (const item of items) {

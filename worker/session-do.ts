@@ -35,6 +35,14 @@ import {
   autonomousFromStored,
   mergeAutonomousConsent,
 } from "../shared/autonomous";
+import { captureInteractiveElements, type CaptureFn } from "./dom-capture";
+import { generateManifest } from "./generate-manifest";
+import {
+  getRegistryEntry,
+  recordDraftTools,
+  blessTool,
+  declineTool,
+} from "./manifest-registry";
 import { buildToolList } from "./mcp/tools";
 import {
   callNativeTool,
@@ -109,7 +117,7 @@ type LiveBrowser = {
     click?: (selector: string, opts?: { timeout?: number }) => Promise<void>;
     press?: (selector: string, key: string, opts?: { timeout?: number }) => Promise<void>;
     waitForSelector?: (selector: string, opts?: { timeout?: number }) => Promise<unknown>;
-    evaluate?: EvaluateFn & DiscoverFn;
+    evaluate?: EvaluateFn & DiscoverFn & CaptureFn;
     context: () => {
       newCDPSession: (page: unknown) => Promise<CdpSession>;
     };
@@ -151,6 +159,11 @@ export class SessionDO extends DurableObject<Env> {
    * a clean page.
    */
   private pageErrorsAttached = false;
+  /**
+   * Origins currently being generated for — the in-flight guard against
+   * duplicate generation from a burst of misses or repeated manual clicks.
+   */
+  private generatingOrigins = new Set<string>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -596,6 +609,12 @@ export class SessionDO extends DurableObject<Env> {
       case "autonomous":
         await this.setAutonomous(msg.on);
         return;
+      case "generate_manifest":
+        await this.onGenerateManifest(ws, msg.origin);
+        return;
+      case "manifest_decision":
+        await this.onManifestDecision(msg.origin, msg.name, msg.bless);
+        return;
     }
   }
 
@@ -903,6 +922,9 @@ export class SessionDO extends DurableObject<Env> {
         this.sendState();
       }
       if (!found.ok) {
+        if (found.reason === "no-webmcp") {
+          void this.maybeAutoGenerate(originFromUrl(url));
+        }
         return {
           ok: true,
           text:
@@ -915,6 +937,7 @@ export class SessionDO extends DurableObject<Env> {
       if (tools.length === 0) {
         // modelContext is always present because we install it, so an empty
         // list means the site registered nothing -- not that WebMCP is absent.
+        void this.maybeAutoGenerate(originFromUrl(url));
         return {
           ok: true,
           text: `${url} registered no WebMCP tools of its own. A tool for this origin would have to be synthesised.`,
@@ -969,6 +992,9 @@ export class SessionDO extends DurableObject<Env> {
         parsed.arguments,
       );
       if (!native.used) {
+        if (native.reason === "no-webmcp") {
+          void this.maybeAutoGenerate(origin);
+        }
         return { ok: false, text: nativeFailure(parsed.name, origin, native) };
       }
       return { ok: true, text: native.text ?? `ran ${origin}'s own ${parsed.name}` };
@@ -1393,6 +1419,109 @@ export class SessionDO extends DurableObject<Env> {
   private browserState(): BrowserState {
     if (this.live) return "live";
     return this.env.BROWSER ? "idle" : "missing";
+  }
+
+  /**
+   * Automatic entry point. Called from a "no WebMCP" miss in
+   * list_remote_tools / call_remote_tool. Never regenerates for an origin
+   * that already has any registry entry — draft, blessed, or declined — a
+   * human re-triggers manually (onGenerateManifest) if they want another
+   * pass. Fire-and-forget: callers do `void this.maybeAutoGenerate(...)`.
+   */
+  private async maybeAutoGenerate(origin: string): Promise<void> {
+    const kv = this.env.MANIFEST_REGISTRY;
+    if (!kv) return;
+    if (!this.claimGeneration(origin)) return;
+    let handedOff = false;
+    try {
+      if (!(await this.allowOrigin(origin))) return;
+      if (await getRegistryEntry(kv, origin)) return;
+      handedOff = true;
+      void this.runGeneration(origin, kv);
+    } finally {
+      // runGeneration releases the claim itself once it has it.
+      if (!handedOff) this.generatingOrigins.delete(origin);
+    }
+  }
+
+  /**
+   * Take the generation claim for an origin, or report that someone else
+   * holds it. Synchronous on purpose: a `has` check with an `await` between
+   * it and the claim lets two near-simultaneous misses — or a miss and a
+   * "Map this site" click — both pass and start duplicate generations.
+   */
+  private claimGeneration(origin: string): boolean {
+    if (this.generatingOrigins.has(origin)) return false;
+    this.generatingOrigins.add(origin);
+    return true;
+  }
+
+  /** Manual entry point — the hosted UI's "Map this site" button. */
+  private async onGenerateManifest(ws: WebSocket, origin: string): Promise<void> {
+    const kv = this.env.MANIFEST_REGISTRY;
+    if (!kv) {
+      this.send(ws, { v: 1, type: "error", message: "no manifest registry configured" });
+      return;
+    }
+    if (!this.claimGeneration(origin)) return;
+    let handedOff = false;
+    try {
+      if (!(await this.allowOrigin(origin))) {
+        this.send(ws, { v: 1, type: "error", message: "origin not consented" });
+        return;
+      }
+      handedOff = true;
+      void this.runGeneration(origin, kv);
+    } finally {
+      if (!handedOff) this.generatingOrigins.delete(origin);
+    }
+  }
+
+  /**
+   * Capture, synthesize, store as drafts, broadcast. Never awaited by a
+   * ChatGPT-facing tool call — this is what keeps the model out of any
+   * ChatGPT request/response cycle (README: "no LLM in the hot path").
+   */
+  private async runGeneration(origin: string, kv: KVNamespace): Promise<void> {
+    // The claim is already held by the caller (claimGeneration); this owns
+    // only releasing it.
+    try {
+      const live = this.live;
+      if (!live?.page.evaluate) {
+        this.broadcast({ v: 1, type: "error", message: `no live page open for ${origin}` });
+        return;
+      }
+      const elements = await captureInteractiveElements(
+        live.page.evaluate.bind(live.page) as CaptureFn,
+      );
+      const outcome = await generateManifest(this.env, origin, elements);
+      if (!outcome.ok) {
+        this.broadcast({
+          v: 1,
+          type: "error",
+          message: `could not map ${origin}: ${outcome.error ?? outcome.reason}`,
+        });
+        return;
+      }
+      const entry = await recordDraftTools(kv, origin, outcome.manifests);
+      const pending = entry.tools.filter((t) => t.status === "draft").map((t) => t.manifest);
+      if (pending.length > 0) {
+        this.broadcast({ v: 1, type: "manifest_draft", origin, tools: pending });
+      }
+    } finally {
+      this.generatingOrigins.delete(origin);
+    }
+  }
+
+  /** Bless or decline one draft tool. Re-broadcasts whatever is still pending. */
+  private async onManifestDecision(origin: string, name: string, bless: boolean): Promise<void> {
+    const kv = this.env.MANIFEST_REGISTRY;
+    if (!kv) return;
+    const entry = bless ? await blessTool(kv, origin, name) : await declineTool(kv, origin, name);
+    const pending = (entry?.tools ?? [])
+      .filter((t) => t.status === "draft")
+      .map((t) => t.manifest);
+    this.broadcast({ v: 1, type: "manifest_draft", origin, tools: pending });
   }
 
   /** The observed schema for a remote tool, when the page we read is its own. */

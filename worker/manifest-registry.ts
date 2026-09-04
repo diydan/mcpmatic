@@ -101,3 +101,73 @@ export async function getBlessedManifestByName(
 }
 
 export { originKey as manifestRegistryOriginKey, toolKey as manifestRegistryToolKey };
+
+/**
+ * Add newly generated tools as drafts. A tool name already present in the
+ * entry — draft, blessed, or declined — is skipped: automatic generation
+ * never overwrites a human's prior decision, and a re-run that finds the
+ * same tool again is a no-op for it.
+ */
+export async function recordDraftTools(
+  kv: KvLike,
+  origin: string,
+  manifests: ToolManifest[],
+): Promise<RegistryEntry> {
+  const existing = await getRegistryEntry(kv, origin);
+  const existingNames = new Set((existing?.tools ?? []).map((t) => t.manifest.name));
+  const now = Date.now();
+  const additions: GeneratedTool[] = manifests
+    .filter((m) => !existingNames.has(m.name))
+    .map((m) => ({ manifest: m, status: "draft", generatedAt: now }));
+  const entry: RegistryEntry = { tools: [...(existing?.tools ?? []), ...additions] };
+  await kv.put(originKey(origin), JSON.stringify(entry));
+  return entry;
+}
+
+/**
+ * Bless one tool by name. Writes the per-origin entry (source of truth for
+ * listing) and the `tool:<name>` key (source of truth for `manifestFor`'s
+ * O(1) lookup) — two KV writes, not a transaction; if the second fails the
+ * tool shows as blessed in listings but `manifestFor` still misses it until
+ * a retry. Acceptable for a human-paced, one-tool-at-a-time action.
+ *
+ * The manifest is read out with `find` before the map rather than captured
+ * from inside the map callback: a `let` assigned in a nested closure loses
+ * its narrowing, and the `tool:<name>` write must not be reachable with an
+ * unnarrowed value.
+ */
+export async function blessTool(
+  kv: KvLike,
+  origin: string,
+  name: string,
+): Promise<RegistryEntry | null> {
+  const entry = await getRegistryEntry(kv, origin);
+  if (!entry) return null;
+  const blessedManifest = entry.tools.find((t) => t.manifest.name === name)?.manifest;
+  const now = Date.now();
+  const tools = entry.tools.map((t) =>
+    t.manifest.name === name ? { ...t, status: "blessed" as const, blessedAt: now } : t,
+  );
+  const next: RegistryEntry = { tools };
+  await kv.put(originKey(origin), JSON.stringify(next));
+  if (blessedManifest) {
+    await kv.put(toolKey(name), JSON.stringify(blessedManifest));
+  }
+  return next;
+}
+
+/** Decline one tool by name. No `tool:<name>` key is ever written for it. */
+export async function declineTool(
+  kv: KvLike,
+  origin: string,
+  name: string,
+): Promise<RegistryEntry | null> {
+  const entry = await getRegistryEntry(kv, origin);
+  if (!entry) return null;
+  const tools = entry.tools.map((t) =>
+    t.manifest.name === name ? { ...t, status: "declined" as const } : t,
+  );
+  const next: RegistryEntry = { tools };
+  await kv.put(originKey(origin), JSON.stringify(next));
+  return next;
+}

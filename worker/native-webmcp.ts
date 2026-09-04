@@ -126,7 +126,9 @@ function describeMismatch(check: Extract<SchemaCheck, { ok: false }>): string {
   return parts.join("; ");
 }
 
-const NAME_RE = /^[A-Za-z0-9_.-]{1,128}$/;
+// Exported for generate-manifest.ts, which validates a synthesised tool's name
+// against the same pattern rather than keeping a second copy of it.
+export const NAME_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 const EMPTY_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {},
@@ -139,7 +141,7 @@ function cleanText(v: unknown, max = 200): string {
     .slice(0, max);
 }
 
-function sanitizeSchema(raw: unknown): Record<string, unknown> {
+export function sanitizeSchema(raw: unknown): Record<string, unknown> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...EMPTY_SCHEMA };
   try {
     const json = JSON.stringify(raw);
