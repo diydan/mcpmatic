@@ -10,6 +10,39 @@ export type GenerateOutcome =
 
 const STEP_ACTIONS = new Set(["goto", "fill", "type", "click", "press", "wait"]);
 
+// A model-proposed selector or key is a moderately-sized DOM/keyboard token;
+// a proposed URL is somewhat longer. Both are capped, not truncated, because
+// a truncated selector or URL would silently point somewhere wrong rather
+// than merely being long — the whole tool is rejected instead.
+const MAX_URL_LEN = 1000;
+const MAX_FIELD_LEN = 500;
+
+/**
+ * A `goto` may only target the tool's own origin.
+ *
+ * `buildPrompt` interpolates element names taken straight from the page's
+ * `aria-label`/`textContent`, so the target site has a channel into the tool
+ * proposal, and nothing downstream re-checks the step's URL: session-do
+ * consent-checks `manifest.origin`, not `step.url`. `isPrivateUrl` fails
+ * closed at execution (blocking `javascript:` and internal addresses) and the
+ * review screen prints the URL, but that human screen should not be the only
+ * thing standing between a page and a cross-origin navigation. A tool scoped
+ * to one site has no legitimate reason to navigate off it.
+ *
+ * Parsed, not string-prefixed: `https://example.com.evil.test` must not pass
+ * as `https://example.com`. Runtime `{{placeholder}}` interpolation survives
+ * this (a template in the path or query still parses, and `runStep`
+ * percent-encodes the substituted value so it cannot escape into the host),
+ * while a template in the host position fails to match and is rejected.
+ */
+function isSameOrigin(url: string, origin: string): boolean {
+  try {
+    return new URL(url).origin === origin;
+  } catch {
+    return false;
+  }
+}
+
 function buildPrompt(origin: string, elements: PageElement[]): string {
   const lines = elements
     .map((e) => `- role=${e.role} name=${JSON.stringify(e.name)} selector=${e.selector}`)
@@ -26,28 +59,42 @@ function buildPrompt(origin: string, elements: PageElement[]): string {
   ].join("\n");
 }
 
-function validateStep(raw: unknown): ManifestStep | null {
+function validateStep(raw: unknown, origin: string): ManifestStep | null {
   if (!raw || typeof raw !== "object") return null;
   const s = raw as Record<string, unknown>;
   if (typeof s.action !== "string" || !STEP_ACTIONS.has(s.action)) return null;
   if (s.action === "goto") {
-    return typeof s.url === "string" ? { action: "goto", url: s.url } : null;
+    return typeof s.url === "string" &&
+      s.url.length <= MAX_URL_LEN &&
+      isSameOrigin(s.url, origin)
+      ? { action: "goto", url: s.url }
+      : null;
   }
   if (s.action === "fill" || s.action === "type") {
-    return typeof s.selector === "string" && typeof s.from === "string"
+    return typeof s.selector === "string" &&
+      s.selector.length <= MAX_FIELD_LEN &&
+      typeof s.from === "string" &&
+      s.from.length <= MAX_FIELD_LEN
       ? { action: s.action, selector: s.selector, from: s.from }
       : null;
   }
   if (s.action === "click") {
-    return typeof s.selector === "string" ? { action: "click", selector: s.selector } : null;
+    return typeof s.selector === "string" && s.selector.length <= MAX_FIELD_LEN
+      ? { action: "click", selector: s.selector }
+      : null;
   }
   if (s.action === "press") {
-    return typeof s.selector === "string" && typeof s.key === "string"
+    return typeof s.selector === "string" &&
+      s.selector.length <= MAX_FIELD_LEN &&
+      typeof s.key === "string" &&
+      s.key.length <= MAX_FIELD_LEN
       ? { action: "press", selector: s.selector, key: s.key }
       : null;
   }
   if (s.action === "wait") {
-    return typeof s.selector === "string" ? { action: "wait", selector: s.selector } : null;
+    return typeof s.selector === "string" && s.selector.length <= MAX_FIELD_LEN
+      ? { action: "wait", selector: s.selector }
+      : null;
   }
   return null;
 }
@@ -75,7 +122,7 @@ function validateManifest(raw: unknown, origin: string): ToolManifest | null {
   if (!Array.isArray(m.steps) || m.steps.length === 0) return null;
   const steps: ManifestStep[] = [];
   for (const rawStep of m.steps) {
-    const step = validateStep(rawStep);
+    const step = validateStep(rawStep, origin);
     if (!step) return null;
     steps.push(step);
   }

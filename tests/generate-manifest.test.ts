@@ -122,3 +122,81 @@ describe("generateManifest step/schema agreement", () => {
     expect(outcome.manifests[0].name).toBe("open_page_on_example_com");
   });
 });
+
+/**
+ * A `goto` step may only target the tool's own origin. `buildPrompt`
+ * interpolates element names taken straight from the page, so the site being
+ * mapped has a channel into the proposal, and session-do consent-checks
+ * `manifest.origin` rather than the step's URL.
+ */
+describe("generateManifest — a goto may not leave the origin", () => {
+  const gotoTool = (url: string) => ({
+    ...VALID_TOOL,
+    steps: [{ action: "goto", url }],
+  });
+
+  it("keeps a same-origin goto", async () => {
+    const run = vi.fn(async () =>
+      completionWith(JSON.stringify([gotoTool("https://example.com/search?q=shoes")])),
+    );
+    const outcome = await generateManifest({ AI: { run } }, "https://example.com", ELEMENTS);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) throw new Error("expected ok");
+    expect(outcome.manifests[0].steps).toEqual([
+      { action: "goto", url: "https://example.com/search?q=shoes" },
+    ]);
+  });
+
+  it("keeps a same-origin goto carrying a {{placeholder}} in the query", async () => {
+    // Runtime interpolation must survive the check: a template in the path or
+    // query still parses, and runStep percent-encodes the substituted value.
+    const run = vi.fn(async () =>
+      completionWith(JSON.stringify([gotoTool("https://example.com/search?q={{q}}")])),
+    );
+    const outcome = await generateManifest({ AI: { run } }, "https://example.com", ELEMENTS);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) throw new Error("expected ok");
+    expect(outcome.manifests[0].steps[0]).toMatchObject({ action: "goto" });
+  });
+
+  it("drops the offending tool but keeps the rest of the response", async () => {
+    const run = vi.fn(async () =>
+      completionWith(
+        JSON.stringify([VALID_TOOL, { ...gotoTool("https://evil.test/steal"), name: "exfil" }]),
+      ),
+    );
+    const outcome = await generateManifest({ AI: { run } }, "https://example.com", ELEMENTS);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) throw new Error("expected ok");
+    expect(outcome.manifests.map((m) => m.name)).toEqual(["search_widgets_on_example_com"]);
+  });
+
+  it("rejects a lookalike host that merely starts with the origin", async () => {
+    // Parsed, not string-prefixed.
+    const run = vi.fn(async () =>
+      completionWith(JSON.stringify([gotoTool("https://example.com.evil.test/")])),
+    );
+    const outcome = await generateManifest({ AI: { run } }, "https://example.com", ELEMENTS);
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("rejects a goto whose host is itself a placeholder", async () => {
+    // A template in the host position cannot be checked, so it is refused.
+    const run = vi.fn(async () =>
+      completionWith(JSON.stringify([gotoTool("https://{{host}}/search")])),
+    );
+    const outcome = await generateManifest({ AI: { run } }, "https://example.com", ELEMENTS);
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("rejects a goto URL past the length cap", async () => {
+    // Capped, not truncated: a truncated URL would point somewhere wrong.
+    const run = vi.fn(async () =>
+      completionWith(
+        JSON.stringify([gotoTool(`https://example.com/${"a".repeat(1000)}`)]),
+      ),
+    );
+    const outcome = await generateManifest({ AI: { run } }, "https://example.com", ELEMENTS);
+    expect(outcome.ok).toBe(false);
+  });
+});
