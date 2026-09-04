@@ -193,6 +193,28 @@ export class AccountDO extends DurableObject<Env> {
     ) > 0;
   }
 
+  /**
+   * The descriptors a step-up ceremony advertises as `allowCredentials`.
+   *
+   * `allowCredentials` is what scopes a WebAuthn assertion to an authenticator
+   * that is already on file for this account, rather than letting the
+   * authenticator pick any resident credential it has. A bare `id` is what
+   * the spec wants here — public keys live in `getCredential` and are looked
+   * up server-side after the assertion arrives, not shipped in the options.
+   *
+   * Returns an empty list when the account has no passkeys: the WebAuthn
+   * caller's prompt will then offer nothing, which is the right answer —
+   * step-up is impossible until the user has registered at least one.
+   */
+  async listCredentialsForStepUp(): Promise<
+    { id: string; type: "public-key" }[]
+  > {
+    const rows = this.ctx.storage.sql
+      .exec<{ id: string }>(`SELECT id FROM credentials ORDER BY created_at`)
+      .toArray();
+    return rows.map((r) => ({ id: r.id, type: "public-key" }));
+  }
+
   async listSessions(): Promise<string[]> {
     return this.ctx.storage.sql
       .exec<{ token: string }>(`SELECT token FROM sessions ORDER BY claimed_at`)

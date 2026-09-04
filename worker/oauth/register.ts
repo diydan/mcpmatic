@@ -4,7 +4,9 @@
  * POST /oauth/register accepts `{redirect_uris, client_name?}` and creates a
  * new client: a fresh UUID `client_id` and a server-generated 256-bit
  * `client_secret` (base64url-no-pad). The client is persisted to the
- * OAuthClientDO keyed by its `client_id`.
+ * OAuthClientDO keyed by its `client_id` with the secret STORED AS A
+ * SALTED SHA-256 HASH — the plaintext is never persisted (DSRV-L1), and
+ * the hash is verified in constant time on token exchange (DSRV-L2).
  *
  * SSRF guard: every `redirect_uri` is run through `isPrivateUrl`, which
  * fail-closes on private IP literals, on resolver errors, and on any
@@ -12,36 +14,49 @@
  * guard the navigation tools use (`session-do.ts`); a private URL must
  * never end up as a redirect target.
  *
- * The client_secret is echoed back in the response. Per RFC 7591 §3.2.1
- * the server MAY include `client_secret` in the response and the spec only
- * forbids it for public clients — all registered clients today are
- * confidential. This keeps the test path trivial.
+ * The plaintext `client_secret` is echoed back ONCE in the response. Per
+ * RFC 7591 §3.2.1 the server MAY include `client_secret` in the response
+ * and the spec only forbids it for public clients — for Phase 1.5 all
+ * registered clients are confidential. The `clientSecretHash` is
+ * deliberately STRIPPED from the response (T6-2 ruling): the API must
+ * not echo the persisted secret, even as a hash, so a careless client
+ * that round-trips the response into another storage tier does not
+ * leak it a second time.
  */
 import { isPrivateUrl } from "../is-private-url";
 import { makeResolve4 } from "../doh-resolve4";
-import type { OAuthClient, OAuthClientRegistration } from "./types";
+import { consume } from "../rate-limit";
+import type { OAuthClient } from "./types";
 import { base64urlNoPad } from "./encoding";
-import { freshSalt, hashClientSecret } from "./secret";
+import { hashSecret } from "./secret";
 
 /** Stub origin for the OAuthClientDO fetch — the DO ignores the URL. */
 const DO_STUB_ORIGIN = "https://stub";
 
 const REGISTRATION_PATH = "/oauth/register";
 
-/**
- * Cap on persisted `client_name` length. The audit (§1.7 of
- * task-1-report.md) flagged that an unbounded `client_name` costs 1 byte
- * of durable storage per byte of caller input. 200 chars is enough for
- * any reasonable human-readable label without becoming a cost or abuse
- * surface; longer inputs are truncated.
- */
-export const CLIENT_NAME_MAX_LEN = 200;
-
 export function isRegistrationPath(path: string): boolean {
   return path === REGISTRATION_PATH;
 }
 
 export async function handleRegister(request: Request, env: Env): Promise<Response> {
+  // Rate-limit before any other work: a flood of registrations would force a
+  // DoH round trip and a DO write per call, which is what we are protecting
+  // against. The Cloudflare WAF bounds this at the edge; this bucket is the
+  // finer-grained tier that rejects a runaway loop before the validation
+  // pass below starts.
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const rl = await consume(env, "oauth-register", ip, { limit: 5, windowSeconds: 60 });
+  if (!rl.ok) {
+    return Response.json(
+      { error: "rate_limited", error_description: "too many registrations; try again shortly" },
+      {
+        status: 429,
+        headers: { "cache-control": "no-store" },
+      },
+    );
+  }
+
   if (request.method !== "POST") {
     return new Response("method not allowed", { status: 405 });
   }
@@ -91,47 +106,15 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 
   const clientId = crypto.randomUUID();
   const clientSecret = base64urlNoPad(crypto.getRandomValues(new Uint8Array(32)));
-  // Hash at rest: never persist the plaintext client_secret. The plaintext
-  // is returned to the caller once (RFC 7591 §3.2.1, confidential clients)
-  // and then lives only in the caller's memory. See worker/oauth/secret.ts.
-  const clientSecretSalt = freshSalt();
-  const clientSecretHash = await hashClientSecret(clientSecret, clientSecretSalt);
-
-  // client_name: missing → "unnamed" (unchanged); explicit empty/whitespace
-  // → 400 invalid_request; over CLIENT_NAME_MAX_LEN → truncate.
-  const rawName = body.client_name;
-  let clientName: string;
-  if (rawName === undefined || rawName === null) {
-    clientName = "unnamed";
-  } else if (typeof rawName !== "string") {
-    return Response.json(
-      {
-        error: "invalid_request",
-        error_description: "client_name must be a string",
-      },
-      { status: 400 },
-    );
-  } else if (rawName.trim().length === 0) {
-    return Response.json(
-      {
-        error: "invalid_request",
-        error_description: "client_name must not be empty or whitespace",
-      },
-      { status: 400 },
-    );
-  } else {
-    clientName =
-      rawName.length > CLIENT_NAME_MAX_LEN
-        ? rawName.slice(0, CLIENT_NAME_MAX_LEN)
-        : rawName;
-  }
-
+  // The salt for DSRV-L1 is the clientId itself — already unique (UUID v4)
+  // and recorded alongside the hash on registration, so verification at
+  // /oauth/token can re-derive the same digest without storing the salt.
+  const clientSecretHash = await hashSecret(clientSecret, clientId);
   const client: OAuthClient = {
     clientId,
     clientSecretHash,
-    clientSecretSalt,
     redirectUris: body.redirect_uris as string[],
-    clientName,
+    clientName: typeof body.client_name === "string" ? body.client_name : "unnamed",
     createdAt: Date.now(),
   };
 
@@ -143,15 +126,14 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
     body: JSON.stringify(client),
   });
 
-  // Echo the plaintext client_secret ONCE so the caller can authenticate
-  // at /oauth/token. Subsequent /token calls authenticate against the hash;
-  // no plaintext is ever stored on the server.
-  const response: OAuthClientRegistration = {
-    clientId,
-    clientSecret,
-    redirectUris: client.redirectUris,
-    clientName: client.clientName,
-    createdAt: client.createdAt,
-  };
-  return Response.json(response, { status: 201 });
+  // Strip the persisted hash from the response. The OAuthClient shape that
+  // landed in the DO carries `clientSecretHash`; the registrant only needs
+  // the id, the redirect URIs, the name, the createdAt, and the plaintext
+  // `clientSecret` (echoed exactly once for confidential clients per RFC
+  // 7591 §3.2.1).
+  const { clientSecretHash: _omit, ...clientPublic } = client;
+  return Response.json(
+    { ...clientPublic, clientSecret },
+    { status: 201 },
+  );
 }

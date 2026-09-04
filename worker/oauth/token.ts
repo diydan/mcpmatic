@@ -11,8 +11,11 @@
  *    to `OAUTH_TOKENS` KV.
  *
  * 2. `refresh_token` — POST `refresh_token`. The stored `AccessToken` is
- *    looked up under `refresh:<rt>`; clientId must match; on success, a new
- *    access + refresh pair is written, and the *old* refresh key is deleted.
+ *    looked up under `refresh:<rt>`; clientId must match; on success, the
+ *    *old* refresh key is deleted FIRST (linearization point — H3-agent,
+ *    2026-09-04 review), then a new access + refresh pair is written in
+ *    parallel. Deleting first means a worker crash between the writes
+ *    cannot leave two valid refresh tokens indefinitely.
  *
  * Client authentication in this handler is via form params
  * (`client_id` + `client_secret`). Confidential clients per RFC 6749 §2.3.1.
@@ -36,7 +39,7 @@
 import { FACADE_HEADERS } from "../facade-headers";
 import { base64urlNoPad } from "./encoding";
 import { verifyPkce } from "./pkce";
-import { hashClientSecret, timingSafeEqualHex } from "./secret";
+import { verifySecret } from "./secret";
 import type { AccessToken, AuthCode, OAuthClient } from "./types";
 
 /** Stub origin for the OAuth DO fetch — the DOs ignore the URL. */
@@ -90,10 +93,12 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
  * success, null on any failure (unknown id, wrong secret, or missing hash
  * fields on the stored record).
  *
- * The stored record carries a salted SHA-256 hash of the plaintext secret;
- * we recompute the digest of the presented plaintext with the stored salt
- * and compare digests in constant time. Plaintext is never compared and
- * never persisted on the server. See `worker/oauth/secret.ts`.
+ * The persisted `OAuthClient` carries the secret as a salted SHA-256 hash
+ * (`sha256:<hex>`, salt = the clientId). We re-derive the hash with the
+ * same salt and constant-time compare against the stored value — a network
+ * attacker who can repeatedly POST to /oauth/token cannot observe a
+ * per-byte timing leak. DSRV-L1 (no plaintext at rest) and DSRV-L2
+ * (constant-time compare on the hash) both land here.
  */
 async function authenticateClient(
   clientId: string,
@@ -105,11 +110,10 @@ async function authenticateClient(
   const clientRes = await clientStub.fetch(`${DO_STUB_ORIGIN}/get`);
   if (clientRes.status !== 200) return null;
   const client = (await clientRes.json()) as OAuthClient;
-  if (typeof client.clientSecretHash !== "string") return null;
-  if (typeof client.clientSecretSalt !== "string") return null;
-  const candidate = await hashClientSecret(clientSecret, client.clientSecretSalt);
-  if (!timingSafeEqualHex(candidate, client.clientSecretHash)) return null;
-  return client;
+  // Salt is the clientId — same value as at registration time. The constant-
+  // time compare is inside `verifySecret`.
+  const ok = await verifySecret(clientSecret, client.clientSecretHash, clientId);
+  return ok ? client : null;
 }
 
 async function exchangeCode(
@@ -205,7 +209,21 @@ async function refreshAccessToken(
   // than the one presenting it. Treat as invalid_grant; we do NOT touch KV.
   if (tok.clientId !== client.clientId) return jsonError("invalid_grant", 400);
 
-  // Rotate: issue a fresh access + refresh pair, drop the old refresh key.
+  // Rotate: delete the old refresh key FIRST, then issue the fresh pair.
+  // Per 2026-09-04 review (H3-agent): the previous order wrote the new
+  // pair before deleting the old key. A worker crash between those two
+  // writes left two valid refresh tokens indefinitely (the "double
+  // rotation" vulnerability). Deleting first means a crash during the
+  // new writes only forces the user to re-authenticate.
+  try {
+    await env.OAUTH_TOKENS.delete(`refresh:${rt}`);
+  } catch {
+    // Delete is the linearization point — if it fails, no writes have
+    // been attempted yet, so there are no orphans to clean up. Fail
+    // gracefully with a 500; the user retries.
+    return jsonError("server_error", 500);
+  }
+
   const accessToken = base64urlNoPad(crypto.getRandomValues(new Uint8Array(32)));
   const newRefresh = base64urlNoPad(crypto.getRandomValues(new Uint8Array(32)));
   const newTok: AccessToken = {
@@ -215,14 +233,18 @@ async function refreshAccessToken(
     expiresAt: Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000,
   };
 
-  await env.OAUTH_TOKENS.put(`token:${accessToken}`, JSON.stringify(newTok), {
-    expirationTtl: ACCESS_TOKEN_TTL_SECONDS,
-  });
-  await env.OAUTH_TOKENS.put(`refresh:${newRefresh}`, JSON.stringify(newTok), {
-    expirationTtl: REFRESH_TOKEN_TTL_SECONDS,
-  });
-  // Invalidate the old refresh token so it cannot be replayed.
-  await env.OAUTH_TOKENS.delete(`refresh:${rt}`);
+  // Both writes depend only on the delete having succeeded — run them in
+  // parallel. If a put fails, the old refresh key is already gone and
+  // the user has to re-authenticate; that is acceptable per the
+  // 2026-09-04 review (better than orphaning two valid refresh tokens).
+  await Promise.all([
+    env.OAUTH_TOKENS.put(`token:${accessToken}`, JSON.stringify(newTok), {
+      expirationTtl: ACCESS_TOKEN_TTL_SECONDS,
+    }),
+    env.OAUTH_TOKENS.put(`refresh:${newRefresh}`, JSON.stringify(newTok), {
+      expirationTtl: REFRESH_TOKEN_TTL_SECONDS,
+    }),
+  ]);
 
   return new Response(
     JSON.stringify({

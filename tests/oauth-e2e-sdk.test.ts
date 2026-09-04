@@ -512,6 +512,13 @@ describe("OAuth + real MCP SDK client", () => {
     // (The DO's /consume DID run, which is why the original code is now
     // marked used; re-exchanging it with the right client would also
     // fail with invalid_grant, but that's tested in oauth-e2e.test.ts.)
-    expect(shim.kvStore.size).toBe(0);
+    //
+    // The /oauth/register rate-limit also writes a `rl:oauth-register:*`
+    // row per registration call (see worker/rate-limit.ts); that is
+    // unrelated to the token flow this assertion is guarding against.
+    const tokenKeys = [...shim.kvStore.keys()].filter(
+      (k) => k.startsWith("token:") || k.startsWith("refresh:"),
+    );
+    expect(tokenKeys).toEqual([]);
   });
 });

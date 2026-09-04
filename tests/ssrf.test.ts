@@ -37,4 +37,19 @@ describe("isPrivateUrl", () => {
       ]),
     ).toBe(false);
   });
+
+  it("rejects bracketed IPv6 loopback", async () => {
+    expect(await isPrivateUrl("https://[::1]/", vi.fn())).toBe(true);
+  });
+  it("rejects compressed IPv6 ULA", async () => {
+    expect(await isPrivateUrl("https://[fc00::1]/", vi.fn())).toBe(true);
+  });
+  it("rejects IPv4-mapped loopback over IPv6", async () => {
+    expect(await isPrivateUrl("https://[::ffff:127.0.0.1]/", vi.fn())).toBe(true);
+  });
+  it("still allows a public IPv6 literal", async () => {
+    expect(
+      await isPrivateUrl("https://[2606:4700:4700::1111]/", vi.fn()),
+    ).toBe(false);
+  });
 });

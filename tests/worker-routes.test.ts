@@ -85,6 +85,7 @@ import { handleRegister } from "../worker/oauth/register";
 import { handleAuthorize } from "../worker/oauth/authorize";
 import { handleToken } from "../worker/oauth/token";
 import { handleMcp } from "../worker/mcp/server";
+import { SESSION_TOKEN_RE } from "../shared/session-token";
 import worker from "../worker/index";
 
 // ------------------------------------------------------------------------
@@ -99,6 +100,7 @@ import worker from "../worker/index";
  */
 function makeEnv(): Env & {
   __claimAccount: ReturnType<typeof vi.fn>;
+  __claimAccountWithStepUp: ReturnType<typeof vi.fn>;
   __revokeConsent: ReturnType<typeof vi.fn>;
   __grantConsent: ReturnType<typeof vi.fn>;
   __listConsent: ReturnType<typeof vi.fn>;
@@ -111,6 +113,12 @@ function makeEnv(): Env & {
     ok: true,
     consent: ["https://www.allbirds.com"],
   }));
+  const claimAccountWithStepUp = vi.fn(
+    async (_accountId: string, _stepUpToken: string) => ({
+      ok: true as const,
+      consent: ["https://www.allbirds.com"],
+    }),
+  );
   const revokeConsent = vi.fn(async (_origin: string) => ({
     ok: true,
     consent: [],
@@ -131,6 +139,7 @@ function makeEnv(): Env & {
   const sessionGetByName = vi.fn((_name: string) => ({
     initSession: async (_token: string) => {},
     claimAccount,
+    claimAccountWithStepUp,
     revokeConsent,
     grantConsent,
     listConsent,
@@ -149,6 +158,7 @@ function makeEnv(): Env & {
     OAUTH_CODE: { getByName: oauthCodeGetByName },
     __sessionGetByName: sessionGetByName,
     __claimAccount: claimAccount,
+    __claimAccountWithStepUp: claimAccountWithStepUp,
     __revokeConsent: revokeConsent,
     __grantConsent: grantConsent,
     __listConsent: listConsent,
@@ -157,6 +167,7 @@ function makeEnv(): Env & {
     __oauthCodeGetByName: oauthCodeGetByName,
   } as unknown as Env & {
     __claimAccount: ReturnType<typeof vi.fn>;
+    __claimAccountWithStepUp: ReturnType<typeof vi.fn>;
     __revokeConsent: ReturnType<typeof vi.fn>;
     __grantConsent: ReturnType<typeof vi.fn>;
     __listConsent: ReturnType<typeof vi.fn>;
@@ -189,7 +200,7 @@ describe("worker/index.ts — route wiring", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { sessionToken: string; url: string };
-    expect(body.sessionToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(body.sessionToken).toMatch(SESSION_TOKEN_RE);
     expect(body.url).toBe(`https://worker.local/s/${body.sessionToken}`);
     // /sessions MUST plant the sentinel row by calling initSession on the
     // SESSION DO — without it the OAuth authorize handler's /check would
@@ -312,6 +323,7 @@ describe("worker/index.ts — route wiring", () => {
 describe("POST /s/:token/account", () => {
   const TOKEN = "a".repeat(64);
   const ACCOUNT = "b".repeat(64);
+  const STEP_UP = "c".repeat(64);
 
   function post(body: unknown) {
     return new Request(`https://worker.local/s/${TOKEN}/account`, {
@@ -323,30 +335,67 @@ describe("POST /s/:token/account", () => {
 
   it("claims the session for the account and returns the inherited grants", async () => {
     const env = makeEnv();
-    const res = await worker.fetch!(post({ accountId: ACCOUNT }), env);
+    const res = await worker.fetch!(
+      post({ accountId: ACCOUNT, stepUpToken: STEP_UP }),
+      env,
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       ok: true,
       consent: ["https://www.allbirds.com"],
     });
-    expect(env.__claimAccount).toHaveBeenCalledWith(ACCOUNT);
+    expect(env.__claimAccountWithStepUp).toHaveBeenCalledWith(ACCOUNT, STEP_UP);
   });
 
   it("rejects a malformed account id without touching the DO", async () => {
     const env = makeEnv();
-    const res = await worker.fetch!(post({ accountId: "nope" }), env);
+    const res = await worker.fetch!(
+      post({ accountId: "nope", stepUpToken: STEP_UP }),
+      env,
+    );
     expect(res.status).toBe(400);
-    expect(env.__claimAccount).not.toHaveBeenCalled();
+    expect(env.__claimAccountWithStepUp).not.toHaveBeenCalled();
   });
 
-  it("refuses a session already claimed by another account", async () => {
+  it("rejects a missing stepUpToken — the session URL alone no longer claims", async () => {
+    // The session token is a bearer credential in the URL: anyone who learned
+    // it could claim any account before step-up existed. The route must say
+    // so in the response, not silently 200 an unverified claim.
     const env = makeEnv();
-    env.__claimAccount.mockResolvedValueOnce({
-      ok: false,
-      error: "claimed-by-another",
-    });
     const res = await worker.fetch!(post({ accountId: ACCOUNT }), env);
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "step-up required",
+    });
+    expect(env.__claimAccountWithStepUp).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty stepUpToken for the same reason", async () => {
+    const env = makeEnv();
+    const res = await worker.fetch!(
+      post({ accountId: ACCOUNT, stepUpToken: "" }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect(env.__claimAccountWithStepUp).not.toHaveBeenCalled();
+  });
+
+  it("answers 401 when the DO rejects the step-up token", async () => {
+    const env = makeEnv();
+    env.__claimAccountWithStepUp.mockResolvedValueOnce({
+      ok: false,
+      error: "step-up invalid",
+    });
+    const res = await worker.fetch!(
+      post({ accountId: ACCOUNT, stepUpToken: STEP_UP }),
+      env,
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "step-up invalid",
+    });
   });
 });
 

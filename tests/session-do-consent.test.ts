@@ -43,6 +43,7 @@ vi.stubGlobal(
 );
 
 import { SessionDO } from "../worker/session-do";
+import { MANIFESTS } from "../worker/manifests";
 
 function makeSql() {
   const { DatabaseSync } = require("node:sqlite") as {
@@ -225,5 +226,80 @@ describe("SessionDO consent — grant/revoke round trip", () => {
     await do_.claimAccount("a".repeat(64));
     await do_.revokeConsent("https://www.allbirds.com");
     expect(revoke).toHaveBeenCalledWith("https://www.allbirds.com");
+  });
+});
+
+/**
+ * Autonomous mode is the model-driven path. Two flags control it now:
+ *   `autonomous`     — catalog origins are auto-granted as soon as the
+ *                      session is set up.
+ *   `autoGrantNew`   — origins *outside* the catalog are auto-granted
+ *                      only when this is on. Off by default.
+ * The split exists so that turning autonomous on does not silently widen
+ * the grant set to every site ChatGPT navigates to (M9).
+ *
+ * `allowOrigin` is private; we reach it via the same `as unknown` cast
+ * the rest of this file uses for internal access. The function returns
+ * `false` rather than throwing when a non-catalog origin arrives without
+ * the second flag, so the four navigation call sites return a clean
+ * `{ ok: false }` instead of crashing.
+ */
+describe("SessionDO autonomous — autoGrantNew gate (M9)", () => {
+  let ctx: FakeCtx;
+  let do_: SessionDO;
+
+  beforeEach(() => {
+    ({ ctx } = makeCtx());
+    do_ = makeDo(ctx);
+  });
+
+  // A catalog origin from MANIFESTS. The test does not assert which one —
+  // just that it is in the catalog and is auto-granted as soon as
+  // `autonomous` is on, with or without `autoGrantNew`.
+  const catalogOrigin: string = MANIFESTS[0].origin;
+  const offCatalogOrigin = "https://www.example-store.example";
+
+  // Reach the private method via the same cast trick the file already uses.
+  const allowOrigin = (origin: string) =>
+    (do_ as unknown as { allowOrigin: (o: string) => Promise<boolean> })
+      .allowOrigin(origin);
+
+  it("catalog origin is auto-granted with autonomous on, autoGrantNew off", async () => {
+    await do_.initSession("t".repeat(64));
+    await do_.setAutonomous(true, false);
+    expect(await allowOrigin(catalogOrigin)).toBe(true);
+  });
+
+  it("off-catalog origin is auto-granted only when autoGrantNew is on", async () => {
+    await do_.initSession("t".repeat(64));
+    await do_.setAutonomous(true, false);
+    // Without the second flag, the gate closes.
+    expect(await allowOrigin(offCatalogOrigin)).toBe(false);
+    // And the origin must NOT be in the consent list.
+    const { consent } = await do_.listConsent();
+    expect(consent).not.toContain(offCatalogOrigin);
+
+    // Turning the second flag on opens the gate.
+    await do_.setAutonomous(true, true);
+    expect(await allowOrigin(offCatalogOrigin)).toBe(true);
+  });
+
+  it("autonomous off: nothing is auto-granted, even on the catalog", async () => {
+    await do_.initSession("t".repeat(64));
+    // Do NOT call setAutonomous — the default is off.
+    expect(await allowOrigin(catalogOrigin)).toBe(false);
+    expect(await allowOrigin(offCatalogOrigin)).toBe(false);
+    const { consent } = await do_.listConsent();
+    expect(consent).toEqual([]);
+  });
+
+  it("explicit grantConsent still works regardless of the auto flags", async () => {
+    // The public, user-driven path bypasses `allowOrigin` entirely —
+    // a user clicking "grant" must always succeed, even with autonomous
+    // off and autoGrantNew off.
+    await do_.initSession("t".repeat(64));
+    await do_.grantConsent(offCatalogOrigin);
+    const { consent } = await do_.listConsent();
+    expect(consent).toContain(offCatalogOrigin);
   });
 });

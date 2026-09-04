@@ -26,14 +26,14 @@ describe("ensureAccountId", () => {
 
   it("keeps an id that is already stored", () => {
     const existing = "a".repeat(64);
-    const store = fakeStorage({ "browsermatic.accountId": existing });
+    const store = fakeStorage({ "mcpmatic.accountId": existing });
     expect(ensureAccountId(store)).toBe(existing);
   });
 
   it("replaces a malformed stored id rather than sending it to the worker", () => {
     // The worker rejects a bad shape with a 400. Regenerating here means a
     // corrupted value costs the grants once, not on every load forever.
-    const store = fakeStorage({ "browsermatic.accountId": "corrupted" });
+    const store = fakeStorage({ "mcpmatic.accountId": "corrupted" });
     const id = ensureAccountId(store);
     expect(isAccountId(id)).toBe(true);
     expect(id).not.toBe("corrupted");

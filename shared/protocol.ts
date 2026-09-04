@@ -68,7 +68,19 @@ export type ClientMessage =
       result: string;
     }
   | { v: 1; type: "screencast"; on: boolean }
-  | { v: 1; type: "autonomous"; on: boolean }
+  /**
+   * Toggle consent-grant behaviour. `on` is the catalog-grant master; when
+   * `autoGrantNew` is also true, the model may navigate to origins outside
+   * the catalog without a per-origin grant. A payload that omits
+   * `autoGrantNew` leaves that flag at its current value (the DO defaults to
+   * `false` on the first write that doesn't mention it).
+   */
+  | {
+      v: 1;
+      type: "autonomous";
+      on: boolean;
+      autoGrantNew?: boolean;
+    }
   | { v: 1; type: "generate_manifest"; origin: string }
   | { v: 1; type: "manifest_decision"; origin: string; name: string; approve: boolean }
   /**
@@ -114,6 +126,7 @@ export type ServerMessage =
       remoteTools?: DiscoveredTool[];
       consented?: string[];
       autonomous?: boolean;
+      autoGrantNew?: boolean;
     }
   | { v: 1; type: "audit"; rows: AuditRow[] }
   /**

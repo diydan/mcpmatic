@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import type { AuditRow, ToolSchema } from "../../shared/protocol";
+import { RICH_SCHEMA } from "../lib/chat-sanitize-schema";
 
 type Line =
   | { kind: "user"; text: string }
@@ -74,7 +75,7 @@ export function ChatPanel({
               data-kind={line.kind}
               className="chat__line chat__line--rich"
             >
-              <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
+              <ReactMarkdown rehypePlugins={[[rehypeSanitize, RICH_SCHEMA]]}>
                 {line.text}
               </ReactMarkdown>
             </div>

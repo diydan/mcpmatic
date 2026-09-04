@@ -11,7 +11,8 @@ import {
 import { runSteps } from "./steps";
 import { originSlug } from "../shared/origin";
 import { isPrivateUrl } from "./is-private-url";
-import { makeResolve4 } from "./doh-resolve4";
+import { makeResolve4, makeResolve4Records } from "./doh-resolve4";
+import { navigationStable } from "./navigation-stable";
 import {
   dispatchKey,
   dispatchMouse,
@@ -73,6 +74,7 @@ import {
 import { parseBridgeRole } from "./bridge-role";
 import { claimDecision } from "./account";
 import { toAuditRows, type StoredAuditRow } from "./audit-rows";
+import { takeStepUp } from "./passkey-challenge";
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 /**
@@ -99,6 +101,28 @@ type ToolResult = {
   resolved?: string[];
   reason?: string;
 };
+/**
+ * Refuse `https://user:pass@host/` before any navigation (2026-09-04 review,
+ * agent M5). Such a URL passes the SSRF guard — that guard classifies the
+ * host, and the host is ordinary — but the page then loads with credentials
+ * the address bar renders, a misconfigured Referer forwards, and the CDP
+ * screencast stores verbatim in its frame metadata. A URL that does not parse
+ * is left to the guards below, which are fail-closed about it.
+ */
+function hasUrlCredentials(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.username !== "" || parsed.password !== "";
+  } catch {
+    return false;
+  }
+}
+/** The one refusal text for a URL that carries `user:pass@` credentials. */
+const CREDENTIALS_REFUSED = "navigation refused (credentials-in-url)";
+/** Fresh each call: a tool result travels to callers that may extend it. */
+function credentialsRefusal(): ToolResult {
+  return { ok: false, text: CREDENTIALS_REFUSED, reason: "credentials-in-url" };
+}
 /** Grace after the last client disconnects before the browser is released. */
 const IDLE_GRACE_MS = 3 * 60 * 1000;
 const VIEWPORT = { width: 1280, height: 720 };
@@ -282,11 +306,19 @@ export class SessionDO extends DurableObject<Env> {
    * route so the Session page can hydrate its `consented` state on mount
    * when an origin was pre-seeded via POST /sessions. Idempotent.
    */
-  async listConsent(): Promise<{ consent: string[]; autonomous: boolean }> {
+  async listConsent(): Promise<{
+    consent: string[];
+    autonomous: boolean;
+    autoGrantNew: boolean;
+  }> {
     if (this.expired()) {
       throw new Error("session expired");
     }
-    return { consent: this.readConsent(), autonomous: this.readAutonomous() };
+    return {
+      consent: this.readConsent(),
+      autonomous: this.readAutonomous(),
+      autoGrantNew: this.readAutoGrantNew(),
+    };
   }
 
   /**
@@ -334,8 +366,17 @@ export class SessionDO extends DurableObject<Env> {
    * authenticator may be attached to, and never returns it to a client. That
    * is the whole point — registration must prove possession of the session,
    * not merely knowledge of an account id.
+   *
+   * Honours the session TTL: every other entry point (grantConsent,
+   * revokeConsent, listConsent, the WebSocket accept bridge) refuses an
+   * expired session, and the route that calls this had to do the same —
+   * before this guard a token past its TTL could mint a durable passkey
+   * bound to whatever account it had claimed.
    */
   async accountForPasskey(): Promise<{ accountId: string | null }> {
+    if (this.expired()) {
+      throw new Error("session expired");
+    }
     return { accountId: this.accountId() };
   }
 
@@ -346,6 +387,11 @@ export class SessionDO extends DurableObject<Env> {
    * anything already granted, and the account learns those grants too. First
    * claim wins — the token is a bearer credential, so a second account must
    * not be able to bind it and inherit the list.
+   *
+   * Kept as the implementation that the worker used before step-up existed.
+   * `claimAccountWithStepUp` is the front door now; this one is unreachable
+   * from any route, so it stays as a non-credential assertion path for tests
+   * and any future caller that has already proven possession another way.
    */
   async claimAccount(
     accountId: string,
@@ -364,6 +410,30 @@ export class SessionDO extends DurableObject<Env> {
     this.writeConsent(grants);
     this.sendState();
     return { ok: true, consent: grants };
+  }
+
+  /**
+   * Bind this session to an account, but only after a step-up token minted by
+   * a fresh WebAuthn assertion proves the caller controls an authenticator
+   * registered to that account *and* the session whose URL they hold.
+   *
+   * The token is the only thing the worker forwards from the request: this
+   * method re-binds it against the session's own token (rejects cross-session
+   * replay) and against the requested accountId (rejects cross-account
+   * replay). On a match, the same `claimAccount` logic runs.
+   */
+  async claimAccountWithStepUp(
+    accountId: string,
+    stepUpToken: string,
+  ): Promise<{ ok: boolean; consent?: string[]; error?: string }> {
+    const sessionToken = this.sessionToken();
+    if (!sessionToken) return { ok: false, error: "no session" };
+    const taken = await takeStepUp(this.env.OAUTH_TOKENS, stepUpToken, {
+      accountId,
+      sessionToken,
+    });
+    if (!taken) return { ok: false, error: "step-up invalid" };
+    return this.claimAccount(accountId);
   }
 
   private sessionToken(): string | null {
@@ -607,7 +677,10 @@ export class SessionDO extends DurableObject<Env> {
         await this.onInput(msg);
         return;
       case "autonomous":
-        await this.setAutonomous(msg.on);
+        // `autoGrantNew` is optional on the wire — a payload that omits it
+        // leaves the DO's stored flag untouched. Lets the console update one
+        // switch at a time without having to remember the other's value.
+        await this.setAutonomous(msg.on, msg.autoGrantNew);
         return;
       case "generate_manifest":
         await this.onGenerateManifest(ws, msg.origin);
@@ -963,6 +1036,7 @@ export class SessionDO extends DurableObject<Env> {
       const parsed = parseCallRemoteArgs(args);
       if (!parsed.ok) return { ok: false, text: parsed.text };
       const target = parsed.origin ?? "";
+      if (target && hasUrlCredentials(target)) return credentialsRefusal();
       if (target && !(await this.allowOrigin(originFromUrl(target)))) {
         return { ok: false, text: "origin not consented" };
       }
@@ -976,6 +1050,8 @@ export class SessionDO extends DurableObject<Env> {
       if (target && originFromUrl(live.page.url()) !== originFromUrl(target)) {
         const blocked = await isPrivateUrl(target, makeResolve4());
         if (blocked) return { ok: false, text: "navigation refused (ssrf)" };
+        const stable = await navigationStable(target, makeResolve4Records());
+        if (!stable.ok) return { ok: false, text: "navigation refused (ssrf)" };
         await live.page.goto(target, {
           waitUntil: "domcontentloaded",
           timeout: 30_000,
@@ -1001,8 +1077,11 @@ export class SessionDO extends DurableObject<Env> {
     }
     if (name === "navigate_to") {
       const target = String(args.origin ?? args.url ?? "");
+      if (hasUrlCredentials(target)) return credentialsRefusal();
       const blocked = await isPrivateUrl(target, makeResolve4());
       if (blocked) return { ok: false, text: "navigation refused (ssrf)" };
+      const stable = await navigationStable(target, makeResolve4Records());
+      if (!stable.ok) return { ok: false, text: "navigation refused (ssrf)" };
       const dest = originFromUrl(target);
       if (!(await this.allowOrigin(dest))) {
         return { ok: false, text: "origin not consented" };
@@ -1118,8 +1197,11 @@ export class SessionDO extends DurableObject<Env> {
     const live = await this.ensureBrowser();
     if (!live) return { ok: false, text: "no browser" };
     if (originFromUrl(live.page.url()) !== manifest.origin) {
+      if (hasUrlCredentials(manifest.origin)) return credentialsRefusal();
       const blocked = await isPrivateUrl(manifest.origin, makeResolve4());
       if (blocked) return { ok: false, text: "navigation refused (ssrf)" };
+      const stable = await navigationStable(manifest.origin, makeResolve4Records());
+      if (!stable.ok) return { ok: false, text: "navigation refused (ssrf)" };
       await live.page.goto(manifest.origin, {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
@@ -1181,8 +1263,11 @@ export class SessionDO extends DurableObject<Env> {
 
   /** The one step that leaves the page it is on, so the one that needs the guard. */
   private async gotoGuarded(live: LiveBrowser, url: string): Promise<void> {
+    if (hasUrlCredentials(url)) throw new Error(CREDENTIALS_REFUSED);
     const blocked = await isPrivateUrl(url, makeResolve4());
     if (blocked) throw new Error("navigation refused (ssrf)");
+    const stable = await navigationStable(url, makeResolve4Records());
+    if (!stable.ok) throw new Error("navigation refused (ssrf)");
     await live.page.goto(url, {
       waitUntil: "domcontentloaded",
       timeout: 30_000,
@@ -1362,20 +1447,56 @@ export class SessionDO extends DurableObject<Env> {
     return autonomousFromStored(row?.value);
   }
 
+  /**
+   * Auto-grant new (non-catalog) origins. Independent of `readAutonomous` —
+   * autonomous-mode catalog grants can be on while this is off, which is the
+   * 2026-09-04 review's M8 default: the model still gets the demo catalog,
+   * but a navigation it decides on by itself to a site we don't know about
+   * must fail closed rather than silently widen the grant set.
+   *
+   * Stored as "0"/"1" alongside `autonomous`. A row that does not exist
+   * counts as "0" — existing sessions pre-dating this split keep the
+   * conservative behaviour.
+   */
+  private readAutoGrantNew(): boolean {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'autoGrantNew' LIMIT 1`,
+      )
+      .toArray()[0];
+    return row?.value === "1";
+  }
+
   private async allowOrigin(origin: string): Promise<boolean> {
     if (!origin) return false;
     if (this.consented(origin)) return true;
     if (!this.readAutonomous()) return false;
+    const known = new Set(MANIFESTS.map((m) => m.origin));
+    // Catalog origins are auto-granted as soon as autonomous is on; anything
+    // outside the catalog requires `autoGrantNew` too. Without that second
+    // gate a model-driven navigation to an arbitrary site would silently
+    // widen the grant set — the M9 agent review item this closes.
+    if (!known.has(origin) && !this.readAutoGrantNew()) return false;
     await this.grantConsent(origin);
     return this.consented(origin);
   }
 
-  private async setAutonomous(on: boolean): Promise<void> {
+  private async setAutonomous(
+    on: boolean,
+    autoGrantNew?: boolean,
+  ): Promise<void> {
     this.ctx.storage.sql.exec(
       `INSERT INTO meta (key, value) VALUES ('autonomous', ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       on ? "1" : "0",
     );
+    if (typeof autoGrantNew === "boolean") {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO meta (key, value) VALUES ('autoGrantNew', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        autoGrantNew ? "1" : "0",
+      );
+    }
     if (on) {
       const catalog = [...new Set(MANIFESTS.map((m) => m.origin))];
       const merged = mergeAutonomousConsent(this.readConsent(), catalog);
@@ -1565,6 +1686,7 @@ export class SessionDO extends DurableObject<Env> {
         origin && origin === this.remoteToolsOrigin ? this.remoteTools : [],
       consented: this.readConsent(),
       autonomous: this.readAutonomous(),
+      autoGrantNew: this.readAutoGrantNew(),
     });
   }
 

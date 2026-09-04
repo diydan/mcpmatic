@@ -54,11 +54,16 @@ echo
 # ---------------------------------------------------------------------------
 bold "1. POST /sessions"
 session_resp=$(curl -sS -X POST "$BASE_URL/sessions")
-session_token=$(printf '%s' "$session_resp" | sed -nE 's/.*"sessionToken":"([a-f0-9]{64})".*/\1/p')
-if [[ ! "$session_token" =~ ^[a-f0-9]{64}$ ]]; then
-  red "FAIL: /sessions did not return a 64-hex sessionToken. Got: $session_resp"
+# Extract the field rather than match its shape in the same step — the shape
+# is checked separately below so the two failures are reported independently.
+session_token=$(printf '%s' "$session_resp" | grep -oE '"sessionToken":"[^"]+"' | sed 's/^"sessionToken":"//;s/"$//')
+if [[ ${#session_token} -ne 64 ]]; then
+  red "FAIL: /sessions did not return a 64-char sessionToken. Got: $session_resp"
   exit 1
 fi
+case "$session_token" in
+  *[!0-9a-fA-F]*) red "FAIL: /sessions sessionToken contains non-hex characters. Got: $session_resp"; exit 1 ;;
+esac
 green "OK   sessionToken=$session_token"
 echo
 

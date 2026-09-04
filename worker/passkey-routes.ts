@@ -13,11 +13,11 @@ import {
   rpIdFor,
   toStoredCredential,
 } from "./passkey";
-import { putChallenge, takeChallenge } from "./passkey-challenge";
+import { mintStepUp, putChallenge, takeChallenge } from "./passkey-challenge";
+import { consume } from "./rate-limit";
+import { isSessionToken } from "../shared/session-token";
 
 const RP_NAME = "BrowserMatic";
-/** Same shape the worker's own routes match on. */
-const SESSION_TOKEN_RE = /^[A-Fa-f0-9]{64}$/;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -59,12 +59,23 @@ export async function handlePasskey(
     // possession of the same credential the rest of the product rests on, and
     // knowing the account id alone is not enough.
     const body = (await readJson(request)) as { sessionToken?: unknown };
-    if (typeof body?.sessionToken !== "string" || !SESSION_TOKEN_RE.test(body.sessionToken)) {
+    if (!isSessionToken(body?.sessionToken)) {
       return json({ error: "invalid sessionToken" }, 400);
     }
-    const { accountId } = await env.SESSION.getByName(
-      body.sessionToken,
-    ).accountForPasskey();
+    let accountId: string | null;
+    try {
+      // SessionDO.accountForPasskey throws on an expired session; translate
+      // to the same 410 the consent routes answer, so a stale token cannot
+      // mint a durable passkey bound to whatever account it had claimed.
+      ({ accountId } = await env.SESSION.getByName(
+        body.sessionToken,
+      ).accountForPasskey());
+    } catch (err) {
+      if (err instanceof Error && err.message === "session expired") {
+        return json({ ok: false, error: "session expired" }, 410);
+      }
+      throw err;
+    }
     if (!isAccountId(accountId)) {
       return json({ error: "session has no account" }, 400);
     }
@@ -77,7 +88,7 @@ export async function handlePasskey(
       userID: utf8(accountId),
       authenticatorSelection: {
         residentKey: "required",
-        userVerification: "preferred",
+        userVerification: "required",
       },
     });
     await putChallenge(env.OAUTH_TOKENS, options.challenge, {
@@ -118,9 +129,24 @@ export async function handlePasskey(
   }
 
   if (sub === "login/options") {
+    // The login ceremony is the only public POST in this router — registration
+    // is gated by the session token, so its bucket ceiling is whatever the
+    // WAF rule says. login/options is reached by every sign-in attempt and
+    // must tolerate retries (a real authenticator only fetches it when the
+    // user clicks "sign in", so 30/min is generous); a runaway script that
+    // polls it would burn through KV writes without ever presenting an
+    // assertion. Cap it before the challenge is minted.
+    const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+    const rl = await consume(env, "passkey-login-options", ip, {
+      limit: 30,
+      windowSeconds: 60,
+    });
+    if (!rl.ok) {
+      return json({ error: "rate_limited" }, 429);
+    }
     const options = await generateAuthenticationOptions({
       rpID,
-      userVerification: "preferred",
+      userVerification: "required",
     });
     await putChallenge(env.OAUTH_TOKENS, options.challenge, { kind: "login" });
     return json(options);
@@ -162,6 +188,118 @@ export async function handlePasskey(
     // The account id is what the console needed; it stores it and claims its
     // session with it, exactly as it would one it generated itself.
     return json({ ok: true, accountId });
+  }
+
+  if (sub === "step-up/options") {
+    // Step-up proves a fresh WebAuthn assertion over an authenticator already
+    // bound to the account the caller wants to claim, so the assertion
+    // cannot be lifted onto a different session or replayed into a different
+    // account. The challenge we issue carries the binding; the assertion
+    // signs it; the step-up token we mint on success carries the same
+    // binding into the /s/<token>/account claim that consumes it.
+    //
+    // No claim side-effect here: this endpoint exists to issue a ceremony.
+    // The `accountId` and `sessionToken` are pure inputs that we *echo back
+    // into the KV record*, not anything we look up at the session yet — the
+    // session does not even know a step-up is in flight.
+    const body = (await readJson(request)) as {
+      sessionToken?: unknown;
+      accountId?: unknown;
+    };
+    if (
+      !isSessionToken(body?.sessionToken) ||
+      typeof body?.accountId !== "string" ||
+      !isAccountId(body.accountId)
+    ) {
+      return json({ error: "invalid input" }, 400);
+    }
+    const allowCredentials = await env.ACCOUNT
+      .getByName(body.accountId)
+      .listCredentialsForStepUp();
+    // No credentials means no authenticator is registered for this account,
+    // and a step-up is not possible. Failing here is friendlier than letting
+    // the browser show "no credentials available" — it tells the caller
+    // what the next step is (register a passkey first).
+    if (allowCredentials.length === 0) {
+      return json({ error: "no passkeys on account" }, 400);
+    }
+    const options = await generateAuthenticationOptions({
+      rpID,
+      allowCredentials,
+      userVerification: "required",
+    });
+    await putChallenge(env.OAUTH_TOKENS, options.challenge, {
+      kind: "stepup",
+      accountId: body.accountId,
+      sessionToken: body.sessionToken,
+    });
+    return json(options);
+  }
+
+  if (sub === "step-up/verify") {
+    const body = (await readJson(request)) as {
+      sessionToken?: unknown;
+      accountId?: unknown;
+      response?: AuthenticationResponseJSON;
+    };
+    const sessionToken = body?.sessionToken;
+    const accountId = body?.accountId;
+    const response = body?.response;
+    if (
+      !isSessionToken(sessionToken) ||
+      typeof accountId !== "string" ||
+      !isAccountId(accountId)
+    ) {
+      return json({ error: "invalid input" }, 400);
+    }
+    const challenge = challengeFromClientData(response?.response?.clientDataJSON);
+    if (!response || !challenge) return json({ error: "invalid response" }, 400);
+    const record = await takeChallenge(env.OAUTH_TOKENS, challenge);
+    // Take the challenge *before* we know whether the assertion verifies —
+    // single-use is the point, even on a bad assertion, so the same
+    // challenge cannot be presented twice.
+    if (!record || record.kind !== "stepup") {
+      return json({ error: "unknown challenge" }, 400);
+    }
+    // The challenge carries the binding. A request body that disagrees is
+    // either a client bug or a forgery; refuse without verifying the
+    // assertion so the failure mode is the same in both cases.
+    if (record.accountId !== accountId || record.sessionToken !== sessionToken) {
+      return json({ error: "challenge binding mismatch" }, 400);
+    }
+    const account = env.ACCOUNT.getByName(accountId);
+    const stored = await account.getCredential(response.id);
+    if (!stored) return json({ error: "unknown credential" }, 400);
+    let verified;
+    try {
+      verified = await verifyAuthenticationResponse({
+        response,
+        expectedChallenge: challenge,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
+        credential: fromStoredCredential(stored),
+      });
+    } catch {
+      return json({ error: "verification failed" }, 400);
+    }
+    if (!verified.verified) return json({ error: "verification failed" }, 400);
+    await account.setCredentialCounter(
+      stored.id,
+      verified.authenticationInfo.newCounter,
+    );
+    // 32 bytes of randomness: long enough that guessing is not a threat
+    // model, short enough to fit anywhere. The shape mirrors the session
+    // token so the same string-handling code (storage, regex, length) works.
+    const stepUpBytes = new Uint8Array(32);
+    crypto.getRandomValues(stepUpBytes);
+    const stepUpToken = [...stepUpBytes]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    await mintStepUp(env.OAUTH_TOKENS, stepUpToken, {
+      accountId,
+      sessionToken,
+    });
+    return json({ stepUpToken });
   }
 
   return json({ error: "not found" }, 404);

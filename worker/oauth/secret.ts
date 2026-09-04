@@ -1,57 +1,72 @@
-import { base64urlNoPad } from "./encoding";
+/**
+ * Salted SHA-256 primitives for hashing an OAuth `client_secret`.
+ *
+ * Per the 2026-09-04 review (DSRV-L1, DSRV-L2): the previous design stored
+ * the `client_secret` in plaintext on `OAuthClientDO` and compared it with
+ * `!==`, which is neither constant-time nor privacy-preserving. We now hash
+ * on persist and verify with a constant-time compare on a per-account salt.
+ *
+ * The salt is the `clientId` — it is already unique (a v4 UUID per
+ * registration) and is stored alongside the hash. Using a per-account salt
+ * means a DO data dump reveals only SHA-256 digests that are useless
+ * without the corresponding `clientId`.
+ *
+ * SHA-256 is sufficient here because the secret is itself 256 bits of
+ * random entropy — there is no human password and so no rainbow-table /
+ * dictionary-attack surface. SHA-256 over `salt:secret` makes the stored
+ * hash uninteresting on its own.
+ *
+ * The wire format is `sha256:<hex>` so the storage shape is self-describing
+ * and so we can refuse to verify anything that does not match that prefix
+ * (the constant-time compare is done on equal-length hex strings only).
+ */
+
+const ENC = new TextEncoder();
+
+function hex(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) {
+    out += bytes[i].toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
+async function sha256Hex(message: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", ENC.encode(message));
+  return hex(buf);
+}
 
 /**
- * Salted SHA-256 helper for storing client secrets at rest.
+ * Hash a plaintext client_secret under a per-client salt.
  *
- * Audit finding (#1 in task-1-report.md, §1.2): the OAuthClientDO was
- * persisting `clientSecret` in plaintext, and the token handler did a
- * plain `!==` string compare. Both are fixed here:
- *
- *   - At registration time we generate a fresh 16-byte salt per client,
- *     hash `plaintext + "|" + salt` with SHA-256, and store the digest
- *     plus the salt. The plaintext is echoed back to the caller once
- *     (RFC 7591 §3.2.1 for confidential clients) and discarded.
- *   - At token time we recompute the digest of the presented plaintext
- *     with the stored salt and compare digests in constant time — we
- *     never touch plaintext on disk.
- *
- * SHA-256 (not bcrypt/argon2) is intentional: the secret is 256 bits of
- * CSPRNG entropy, so the threat model is a read-only DO/database breach,
- * not a brute-force preimage search. A slow KDF would not help here and
- * would add a per-request CPU cost on every /token call.
- *
- * Encoding: hex for the hash (matches the rest of the codebase's SHA-256
- * idioms in `pkce.ts`), base64url-no-pad for the salt (matches token
- * encoding in `encoding.ts`).
+ * Returns a self-describing `sha256:<hex>` string suitable for direct
+ * storage on `OAuthClient.clientSecretHash`.
  */
-export async function hashClientSecret(
-  plaintext: string,
+export async function hashSecret(plain: string, salt: string): Promise<string> {
+  return `sha256:${await sha256Hex(`${salt}:${plain}`)}`;
+}
+
+/**
+ * Constant-time verification of a plaintext secret against a stored
+ * `sha256:<hex>` hash using the same per-client salt.
+ *
+ * Returns false on any malformed stored value (missing prefix, wrong
+ * length) — the constant-time compare runs only on equal-length hex
+ * strings.
+ */
+export async function verifySecret(
+  plain: string,
+  stored: string,
   salt: string,
-): Promise<string> {
-  const data = new TextEncoder().encode(`${plaintext}|${salt}`);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-/** Fresh 16-byte salt, base64url-no-pad (22 chars). */
-export function freshSalt(): string {
-  return base64urlNoPad(crypto.getRandomValues(new Uint8Array(16)));
-}
-
-/**
- * Constant-time compare on hex-encoded SHA-256 digests. Same shape as
- * `pkce.ts:timingSafeEqual` — kept local because the two callers (PKCE
- * vs. client secret) live in different modules and should not share an
- * import surface that drags the OAuth handler graph into the PKCE test
- * suite (or vice versa).
- */
-export function timingSafeEqualHex(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
+): Promise<boolean> {
+  if (!stored.startsWith("sha256:")) return false;
+  const expected = stored.slice("sha256:".length);
+  const got = await sha256Hex(`${salt}:${plain}`);
+  if (expected.length !== got.length) return false;
   let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  for (let i = 0; i < expected.length; i++) {
+    diff |= expected.charCodeAt(i) ^ got.charCodeAt(i);
   }
   return diff === 0;
 }

@@ -271,9 +271,16 @@ function renderConsentPage(params: {
   state: string;
   codeChallenge: string;
 }): string {
+  let redirectHost = params.redirectUri;
+  try {
+    redirectHost = new URL(params.redirectUri).host;
+  } catch {
+    // Keep the raw redirect URI when it cannot be parsed as a URL.
+  }
   const esc = {
     clientId: escapeHtml(params.clientId),
     redirectUri: escapeHtml(params.redirectUri),
+    redirectHost: escapeHtml(redirectHost),
     state: escapeHtml(params.state),
     codeChallenge: escapeHtml(params.codeChallenge),
   };
@@ -301,7 +308,7 @@ function renderConsentPage(params: {
 <h1>Authorize ${esc.clientId}</h1>
 <p>An OAuth client is requesting access on your behalf.</p>
 <dl>
-  <dt>Client ID</dt><dd>${esc.clientId}</dd>
+  <dt>Client ID</dt><dd>${esc.clientId} <small>(redirects to ${esc.redirectHost})</small></dd>
   <dt>Redirect URI</dt><dd>${esc.redirectUri}</dd>
   <dt>State</dt><dd>${esc.state}</dd>
 </dl>

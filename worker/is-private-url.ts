@@ -24,52 +24,31 @@
  * "the attacker has already pointed DNS at a private address by guard time",
  * which is the realistic scenario. Truly closing the TOCTOU window would have
  * to happen at the browser/SNI layer, not here.
- */
-
-export const PRIVATE_IP_PATTERNS: readonly RegExp[] = [
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^127\./,
-  /^0\./,
-  /^::1$/,
-  /^f[cd]/,
-  /^fe80:/,
-];
-
-export const BLOCKED_HOSTS: readonly string[] = [
-  "metadata.google.internal",
-  "metadata.goog",
-];
-
-/** Convenience re-export; the canonical declaration is in `./doh-resolve4.ts`. */
-import type { Resolve4 } from "./doh-resolve4";
-export type { Resolve4 };
-
-/**
- * Returns `true` if the URL is private/internal and should be rejected.
- * Returns `false` if the URL is safe to navigate to.
  *
- * Algorithm:
- * 1. Parse the URL; if it doesn't parse, reject (fail closed).
- * 2. Require http: or https:; reject otherwise.
- * 3. Check BLOCKED_HOSTS; reject if listed.
- * 4. Check PRIVATE_IP_PATTERNS against the hostname *string*; reject
- *    if any pattern matches (the hostname is a private IP literal).
- * 5. Resolve the hostname via `resolve4`; if the call throws or
- *    returns an empty array, reject (fail closed — we cannot prove
- *    the URL is safe).
- * 6. For every resolved IP, check PRIVATE_IP_PATTERNS; reject if any
- *    resolved IP is private. (The attacker controls all A records; one
- *    poisoned record is enough.)
- * 7. Otherwise, allow.
+ * Address parsing lives in `shared/net.ts`. That module handles IPv4
+ * dotted-decimal, IPv6 (full, zero-compressed, bracketed, `::ffff:`
+ * mapped, `%zone-id`), and exposes a single `parseIp` returning
+ * { family, isPrivate, isLoopback, isLinkLocal, isDocumentation }. The
+ * previous regex-based check (`PRIVATE_IP_PATTERNS`) missed several
+ * canonical forms — see 2026-09-04 review, H1.
  */
+
+import { parseIp, extractHostname } from "../shared/net";
+
+/** Hard rule for these literals — DNS isn't needed and might lie. */
+function hostnameIsPrivate(hostname: string): boolean {
+  const ip = parseIp(hostname);
+  if (!ip) return false;
+  // Once mapped IPv4 is normalised by parseIp, the family-4 branch reports
+  // loopback/private/link-local directly. For family-6, the loopback and
+  // link-local checks are also flags; off-limits.
+  return ip.isPrivate || ip.isLoopback || ip.isLinkLocal;
+}
+
 export async function isPrivateUrl(
   url: string,
-  resolve4: Resolve4
+  resolve4: Resolve4,
 ): Promise<boolean> {
-  // (1) Parse the URL.
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -77,42 +56,41 @@ export async function isPrivateUrl(
     return true;
   }
 
-  // (2) Protocol allow-list.
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return true;
-  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return true;
+  if (BLOCKED_HOSTS.includes(parsed.hostname)) return true;
 
-  // (3) BLOCKED_HOSTS is authoritative — reject even if the resolved
-  // IP is public.
-  if (BLOCKED_HOSTS.includes(parsed.hostname)) {
-    return true;
-  }
+  const hostname = extractHostname(parsed);
 
-  // (4) Hostname is a private IP literal (e.g. 127.0.0.1 as the
-  // hostname). No DNS resolution needed; the regex check is enough.
-  if (PRIVATE_IP_PATTERNS.some((p) => p.test(parsed.hostname))) {
-    return true;
-  }
+  // IP-literal hostnames short-circuit DNS. There's nothing to rebind
+  // (the address IS the hostname) and resolving would just add a DoH
+  // round-trip — the previous regex-only check implicitly relied on
+  // the same property. Any off-limits flag means reject.
+  if (hostnameIsPrivate(hostname)) return true;
+  const literal = parseIp(hostname);
+  if (literal) return false;
 
-  // (5) Resolve the hostname. Fail closed on any error.
   let resolved: string[];
   try {
-    resolved = await resolve4(parsed.hostname);
+    resolved = await resolve4(hostname);
   } catch {
     return true;
   }
-  if (!resolved || resolved.length === 0) {
-    return true;
-  }
+  if (!resolved || resolved.length === 0) return true;
 
-  // (6) ANY resolved IP being private → reject. The attacker controls
-  // all A records; one poisoned record is enough to rebind.
   for (const ip of resolved) {
-    if (PRIVATE_IP_PATTERNS.some((p) => p.test(ip))) {
-      return true;
-    }
+    const r = parseIp(ip);
+    if (!r) return true;            // an unparseable A/AAAA record is failure
+    if (r.isPrivate || r.isLoopback || r.isLinkLocal) return true;
   }
-
-  // (7) All resolved IPs are public.
   return false;
 }
+
+/** Keep BLOCKED_HOSTS — these are authoritative even if DNS says otherwise. */
+export const BLOCKED_HOSTS: readonly string[] = [
+  "metadata.google.internal",
+  "metadata.goog",
+];
+
+/* PRIVATE_IP_PATTERNS removed — see shared/net.ts. */
+export type { Resolve4 } from "./doh-resolve4";
+import type { Resolve4 } from "./doh-resolve4";

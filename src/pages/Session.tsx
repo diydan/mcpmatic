@@ -25,7 +25,7 @@ import {
 import { Surface } from "../components/Surface";
 import { profileStore, seedIfEmpty } from "../lib/profile-store";
 import { answerApproval } from "../lib/approval-reply";
-import { accountId } from "../lib/account-store";
+import { accountId, claimWithStepUp } from "../lib/account-store";
 import { PasskeyBar } from "../components/PasskeyBar";
 import { displayHosts, unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
@@ -104,6 +104,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
   const [pageUrl, setPageUrl] = useState<string | null>(seededFromNav);
   const [remoteTools, setRemoteTools] = useState<DiscoveredTool[]>([]);
   const [autonomous, setAutonomous] = useState(false);
+  const [autoGrantNew, setAutoGrantNew] = useState(false);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const approvalWait = useRef<((ok: boolean) => void) | null>(null);
   const [manifestDraft, setManifestDraft] = useState<ManifestDraft | null>(null);
@@ -186,22 +187,19 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
       // already carries come back before we read consent. A session that was
       // never claimed, or a browser with no storage, simply skips this and
       // behaves exactly as it did before accounts existed.
+      //
+      // The claim is bound to a fresh WebAuthn assertion over a passkey
+      // registered to the account — knowledge of the session URL is not
+      // enough on its own. A user without a passkey for this account
+      // (typically a fresh console with a generated id) still gets a working
+      // session; they just do not inherit grants until they register one.
       if (isConsole) {
         const id = accountId();
         if (id) {
           try {
-            const res = await fetch(`/s/${sessionToken}/account`, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ accountId: id }),
-            });
-            if (res.ok) {
-              const body = (await res.json()) as { consent?: unknown };
-              if (Array.isArray(body.consent)) {
-                seeded = body.consent.filter(
-                  (x): x is string => typeof x === "string",
-                );
-              }
+            const claimed = await claimWithStepUp(sessionToken, id);
+            if (claimed.ok) {
+              seeded = claimed.consent;
             }
           } catch {
             /* no account this load; the session still works */
@@ -214,8 +212,10 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           const body = (await res.json()) as {
             consent?: unknown;
             autonomous?: unknown;
+            autoGrantNew?: unknown;
           };
           if (body.autonomous === true) setAutonomous(true);
+          if (body.autoGrantNew === true) setAutoGrantNew(true);
           if (Array.isArray(body.consent)) {
             seeded = unionOrigins(
               seeded,
@@ -308,20 +308,10 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           if (msg.type === "state") {
             setDriving(msg.driving);
             setBrowser(msg.browser);
-            if (msg.origin) {
-              setPageOrigin(msg.origin);
-              recordRecentSite(msg.origin);
-            }
-            if (msg.url) {
-              setPageUrl(msg.url);
-              try {
-                const u = new URL(msg.url);
-                recordRecentSite(u.origin);
-              } catch {
-                /* ignore */
-              }
-            }
+            if (msg.origin) setPageOrigin(msg.origin);
+            if (msg.url) setPageUrl(msg.url);
             if (typeof msg.autonomous === "boolean") setAutonomous(msg.autonomous);
+            if (typeof msg.autoGrantNew === "boolean") setAutoGrantNew(msg.autoGrantNew);
             if (msg.consented) {
               const next = new Set(msg.consented);
               const same =
@@ -365,7 +355,6 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           }
           if (msg.type === "assistant") {
             setLines((l) => [...l, { kind: "assistant", text: msg.content }]);
-            setBusy(false);
           }
           if (msg.type === "error") {
             setLines((l) => [...l, { kind: "system", text: msg.message }]);
@@ -377,41 +366,6 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             setManifestDraft(
               msg.tools.length > 0 ? { origin: msg.origin, tools: msg.tools } : null,
             );
-          }
-          if (msg.type === "tool_call") {
-            setLines((l) => [
-              ...l,
-              { kind: "tool", text: `executeTool ${msg.name}` },
-            ]);
-            void (async () => {
-              // Whatever happens below, the DO gets exactly one tool_result for
-              // this call id. Otherwise the agent turn strands and the chat box
-              // stays disabled for the rest of the session.
-              let ok = true;
-              let result = "";
-              try {
-                const listed = await mc.getTools();
-                const tool = listed.find((t) => t.name === msg.name);
-                if (!tool) {
-                  ok = false;
-                  result = `tool ${msg.name} is not registered on this page`;
-                  setLines((l) => [...l, { kind: "system", text: result }]);
-                } else {
-                  result = await mc.executeTool(tool, msg.arguments);
-                }
-              } catch (err) {
-                ok = false;
-                result = err instanceof Error ? err.message : "executeTool failed";
-                setLines((l) => [...l, { kind: "system", text: result }]);
-              }
-              bridgeRef.current?.send({
-                v: 1,
-                type: "tool_result",
-                callId: msg.id,
-                ok,
-                result,
-              });
-            })();
           }
         },
       },
@@ -693,7 +647,6 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
         }}
       />
       <div className="shell__right">
-        {/* Browser render is ALWAYS at the top of the right panel */}
         <Viewport
           jpeg={jpeg}
           driving={driving}
@@ -723,73 +676,94 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             });
           }}
         />
-        {/* Tech details rendered below browser when in Tech view */}
-        {viewMode === "tech" && (
-          <div className="shell__tech-details">
-            <Consent
-              origins={ORIGINS}
-              consented={consented}
-              onGrant={(o) => void grant(o)}
-              onRevoke={(o) => void revoke(o)}
-              autonomous={autonomous}
-              onAutonomous={(on) => {
-                setAutonomous(on);
-                bridgeRef.current?.send({ v: 1, type: "autonomous", on });
-                setLines((l) => [
-                  ...l,
-                  {
-                    kind: "system",
-                    text: on
-                      ? "Auto-browsing enabled: AI can freely explore web stores and compare options without asking for permission on each site."
-                      : "Auto-browsing paused: AI will ask before opening new websites.",
-                  },
-                ]);
-              }}
-            />
-            {isConsole ? (
-              <PasskeyBar
-                sessionToken={sessionToken}
-                onSignedIn={(id) => {
-                  void (async () => {
-                    const res = await fetch(`/s/${sessionToken}/account`, {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ accountId: id }),
-                    });
-                    if (!res.ok) return;
-                    const body = (await res.json()) as { consent?: unknown };
-                    if (!Array.isArray(body.consent)) return;
-                    const next = new Set(
-                      body.consent.filter((x): x is string => typeof x === "string"),
-                    );
-                    setConsented(next);
-                    const reg = registrationRef.current;
-                    if (reg) await syncTools(reg, next, observedRef.current);
-                  })();
-                }}
-              />
-            ) : null}
-            <Surface
-              origin={pageOrigin}
-              remoteTools={remoteTools}
-              registered={tools}
-              onOffer={(name) => void runOffer(name)}
-              mapSiteBusy={mapSiteBusy}
-              onMapSite={
-                pageOrigin
-                  ? () => {
-                      setMapSiteBusy(true);
-                      bridgeRef.current?.send({
-                        v: 1,
-                        type: "generate_manifest",
-                        origin: pageOrigin,
-                      });
-                    }
-                  : undefined
-              }
-            />
-          </div>
-        )}
+        <Consent
+          origins={ORIGINS}
+          consented={consented}
+          onGrant={(o) => void grant(o)}
+          onRevoke={(o) => void revoke(o)}
+          autonomous={autonomous}
+          onAutonomous={(on) => {
+            setAutonomous(on);
+            // Carry `autoGrantNew` on every autonomous message: the DO's
+            // setter only writes the flag when the field is present, so
+            // sending the current value keeps both flags in sync rather
+            // than letting the other one drift if the user just toggled
+            // the catalog switch.
+            bridgeRef.current?.send({
+              v: 1,
+              type: "autonomous",
+              on,
+              autoGrantNew,
+            });
+            setLines((l) => [
+              ...l,
+              {
+                kind: "system",
+                text: on
+                  ? "autonomous on — demo origins granted"
+                  : "autonomous off — new sites need a grant",
+              },
+            ]);
+          }}
+          autoGrantNew={autoGrantNew}
+          onAutoGrantNew={(on) => {
+            setAutoGrantNew(on);
+            bridgeRef.current?.send({
+              v: 1,
+              type: "autonomous",
+              on: autonomous,
+              autoGrantNew: on,
+            });
+            setLines((l) => [
+              ...l,
+              {
+                kind: "system",
+                text: on
+                  ? "auto-grant new on — sites grant as ChatGPT opens them"
+                  : "auto-grant new off — new sites need a manual grant",
+              },
+            ]);
+          }}
+        />
+        {isConsole ? (
+          <PasskeyBar
+            sessionToken={sessionToken}
+            onSignedIn={(id) => {
+              // Adopting a different account means different grants. Re-claim
+              // this session under it and take what comes back. Step-up is
+              // required: the login that produced this id already proved
+              // possession of an authenticator, and step-up proves it again
+              // against the new account/session binding.
+              void (async () => {
+                const claimed = await claimWithStepUp(sessionToken, id);
+                if (!claimed.ok) return;
+                const next = new Set(claimed.consent);
+                setConsented(next);
+                const reg = registrationRef.current;
+                if (reg) await syncTools(reg, next, observedRef.current);
+              })();
+            }}
+          />
+        ) : null}
+        <Surface
+          origin={pageOrigin}
+          remoteTools={remoteTools}
+          registered={tools}
+          onOffer={(name) => void runOffer(name)}
+          mapSiteBusy={mapSiteBusy}
+          onMapSite={
+            pageOrigin
+              ? () => {
+                  setMapSiteBusy(true);
+                  bridgeRef.current?.send({
+                    v: 1,
+                    type: "generate_manifest",
+                    origin: pageOrigin,
+                  });
+                }
+              : undefined
+          }
+        />
       </div>
       <ApprovalDialog
         request={approval}

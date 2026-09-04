@@ -14,32 +14,36 @@
  * the SPA out of every framing surface — the audit (§1.5) flagged their
  * absence as a public-readiness gap.
  *
- * CSP notes:
- *   - `default-src 'self'` is the tight default; any deviation must be
- *     explicit (Google Fonts + the inline theme-bootstrap).
- *   - `script-src 'self' 'unsafe-inline'` allows the inline theme
- *     bootstrap in index.html. The alternative is to extract the script
- *     to an external file — see the audit for the tradeoff.
- *   - `style-src ... 'unsafe-inline'` allows Google Fonts CSS (which
- *     embeds inline @font-face declarations) and the inline `<style>`
- *     blocks Vite injects.
- *   - `connect-src 'self'` restricts fetch / XHR to the worker origin;
- *     cross-origin requests fail closed.
+ * The rationale for each CSP directive lives as a comment on the literal
+ * below — see the `Content-Security-Policy` entry for the source of truth.
  */
 export const FACADE_HEADERS: Record<string, string> = {
   "Origin-Agent-Cluster": "?1",
   "Permissions-Policy": "tools=*",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY",
+  // Content-Security-Policy: per the 2026-09-04 review (M5). `'self'` for
+  // scripts and styles; `'wasm-unsafe-eval'` for the WASM that Vite ships
+  // for the in-browser agent; `connect-src 'self' wss:` so the bridge
+  // socket works; `img-src https: data:` because the screencast is data:
+  // and tool thumbnails use https; `frame-ancestors 'none'` to defeat
+  // clickjacking. No `'unsafe-inline'` *anywhere* — the React build
+  // already has no inline scripts.
   "Content-Security-Policy":
     "default-src 'self'; " +
-    "script-src 'self' 'unsafe-inline'; " +
-    "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; " +
-    "font-src 'self' https://fonts.gstatic.com data:; " +
-    "img-src 'self' data:; " +
-    "connect-src 'self'; " +
-    "base-uri 'self'; " +
+    "script-src 'self' 'wasm-unsafe-eval'; " +
+    "style-src 'self'; " +
+    "img-src 'self' https: data:; " +
+    "connect-src 'self' wss: https:; " +
+    "font-src 'self'; " +
+    "object-src 'none'; " +
+    "base-uri 'none'; " +
     "form-action 'self'; " +
     "frame-ancestors 'none'",
+  // Defence in depth: even if a future browser ignores `frame-ancestors`,
+  // the legacy header denies framing.
+  "X-Frame-Options": "DENY",
+  // HSTS: the worker is HTTPS-only by deployment; declaring the year-long
+  // intent is cheap and removes one round-trip downgrade on first hit.
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
 };

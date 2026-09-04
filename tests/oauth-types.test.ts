@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { hashSecret } from "../worker/oauth/secret";
 import type {
   AccessToken,
   AuthCode,
@@ -7,19 +8,19 @@ import type {
 } from "../worker/oauth/types";
 
 describe("OAuth types", () => {
-  it("OAuthClient carries id, hashed secret + salt, redirect URIs, name, createdAt", () => {
+  it("OAuthClient carries id, secret hash, redirect URIs, name, createdAt", async () => {
     const c: OAuthClient = {
       clientId: "client-abc",
-      clientSecretHash: "a".repeat(64),
-      clientSecretSalt: "AAAAAAAAAAAAAAAAAAAAAA",
+      // Salt = clientId per DSRV-L1; the plaintext never lives on the
+      // persisted record.
+      clientSecretHash: await hashSecret("secret-xyz", "client-abc"),
       redirectUris: ["https://example.com/callback"],
       clientName: "test client",
       createdAt: 1700000000000,
     };
     expect(c.redirectUris).toHaveLength(1);
     expect(c.createdAt).toBeGreaterThan(0);
-    expect(c.clientSecretHash).toHaveLength(64);
-    expect(c.clientSecretSalt).toMatch(/^[A-Za-z0-9_\-]{22}$/);
+    expect(c.clientSecretHash.startsWith("sha256:")).toBe(true);
   });
 
   it("AuthCode binds PKCE challenge + method + expiry + used flag", () => {

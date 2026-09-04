@@ -16,6 +16,13 @@
  * stubbed. The route wiring in `worker/index.ts` is exercised by the
  * sibling `worker-routes.test.ts`.
  *
+ * DSRV-L1: the response of `/oauth/register` carries the plaintext
+ * `clientSecret` once (RFC 7591 §3.2.1) and STRIPS `clientSecretHash`
+ * (T6-2 ruling). The shim's OAUTH_CLIENT map stores the DO-side record
+ * (the one sent to `/register`, which carries the salted SHA-256 hash),
+ * not the response. Tests below split these two shapes where they were
+ * previously collapsed into a single equality check.
+ *
  * The env shim stubs:
  *   - SESSION.getByName(token) → stub with initSession / /check / listTools
  *   - OAUTH_CLIENT.getByName(id) → stub with /register / /get
@@ -40,6 +47,7 @@ import { handleRegister } from "../worker/oauth/register";
 import { handleAuthorize } from "../worker/oauth/authorize";
 import { handleToken } from "../worker/oauth/token";
 import { handleMcp } from "../worker/mcp/server";
+import { SESSION_TOKEN_RE } from "../shared/session-token";
 import type { OAuthClient, OAuthClientRegistration, AuthCode, AccessToken } from "../worker/oauth/types";
 
 // RFC 7636 §4.6 KAT — verifier + its S256 challenge. Used here so the real
@@ -230,7 +238,7 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
     // stub.initSession(token) so the OAuth authorize handler's /check
     // succeeds for it. We replicate that here.
     const sessionToken = await mintSession(shim);
-    expect(sessionToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(sessionToken).toMatch(SESSION_TOKEN_RE);
 
     // ---- 1. Register the OAuth client --------------------------------
     const registerRes = await handleRegister(
@@ -247,17 +255,25 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
     expect(registered.redirectUris).toEqual([REDIRECT_URI]);
     expect(registered.clientName).toBe(CLIENT_NAME);
 
+    // DSRV-L1 / T6-2: the persisted hash MUST NOT be echoed in the
+    // response. The registrant only sees the id + the plaintext secret
+    // (for use once at token-exchange time).
+    expect(registered.clientSecretHash).toBeUndefined();
+
     // Sanity: the client landed in our shim's OAUTH_CLIENT map, keyed by
-    // the same clientId. The stored shape carries the salted hash, not
-    // the plaintext (the plaintext is echoed only in the response), so we
-    // assert the storage shape directly.
+    // the same clientId. This is what OAuthClientDO does in production.
+    // The shim entry is the DO-side record (carries `clientSecretHash`,
+    // NOT `clientSecret`); the response is the public shape (carries
+    // `clientSecret`, NOT `clientSecretHash`). Assert the fields that
+    // both shapes share plus the persisted hash separately.
     const stored = shim.clients.get(registered.clientId);
     expect(stored).toBeDefined();
     expect(stored!.clientId).toBe(registered.clientId);
     expect(stored!.redirectUris).toEqual(registered.redirectUris);
     expect(stored!.clientName).toBe(registered.clientName);
-    expect(stored!.clientSecretHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(stored!.clientSecretSalt).toMatch(/^[A-Za-z0-9_\-]{22}$/);
+    expect(stored!.createdAt).toBe(registered.createdAt);
+    expect(stored!.clientSecretHash.startsWith("sha256:")).toBe(true);
+    expect(stored!.clientSecret).toBeUndefined();
 
     // ---- 2. Authorize: GET returns HTML, POST consent=approve returns 302
     // First the consent GET — this is what a browser would render. It
