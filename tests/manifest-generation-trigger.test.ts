@@ -40,7 +40,7 @@ describe("generation trigger contract", () => {
     expect(await getRegistryEntry(kv, "https://example.com")).not.toBeNull();
   });
 
-  it("records nothing resolvable by name until a bless writes the tool: key", async () => {
+  it("records nothing resolvable by name until a approve writes the tool: key", async () => {
     const kv = fakeKv();
     await recordDraftTools(kv, "https://example.com", [TOOL]);
     expect(await kv.get(`tool:${TOOL.name}`)).toBeNull();

@@ -1,12 +1,12 @@
 import type { ToolManifest } from "../shared/manifest";
 
-export type GeneratedToolStatus = "draft" | "blessed" | "declined";
+export type GeneratedToolStatus = "draft" | "approved" | "declined";
 
 export type GeneratedTool = {
   manifest: ToolManifest;
   status: GeneratedToolStatus;
   generatedAt: number;
-  blessedAt?: number;
+  approvedAt?: number;
 };
 
 export type RegistryEntry = {
@@ -30,8 +30,8 @@ export type KvLike = {
  * `manifestFor` can resolve a name in O(1) without knowing which origin to
  * list. KV has no cross-key transactions, so a write that updates one key
  * and not the other produces either a tool that's listed but not callable,
- * or callable but not listed. Whoever adds the write path (bless/decline)
- * owns keeping both in sync.
+ * or callable but not listed. `approveTool` and `declineTool` below own
+ * keeping both in sync.
  */
 function originKey(origin: string): string {
   return `origin:${origin}`;
@@ -56,10 +56,10 @@ export async function getRegistryEntry(
   }
 }
 
-/** Just the blessed manifests from an entry, in the shape callers already use. */
-export function blessedManifests(entry: RegistryEntry | null): ToolManifest[] {
+/** Just the approved manifests from an entry, in the shape callers already use. */
+export function approvedManifests(entry: RegistryEntry | null): ToolManifest[] {
   if (!entry) return [];
-  return entry.tools.filter((t) => t.status === "blessed").map((t) => t.manifest);
+  return entry.tools.filter((t) => t.status === "approved").map((t) => t.manifest);
 }
 
 /**
@@ -83,10 +83,10 @@ function isToolManifest(value: unknown): value is ToolManifest {
 
 /**
  * O(1) lookup by tool name, for `manifestFor`. Written alongside the
- * per-origin entry whenever a tool is blessed — this code path only reads
+ * per-origin entry whenever a tool is approved — this code path only reads
  * it today, and nothing writes it yet, so it always misses.
  */
-export async function getBlessedManifestByName(
+export async function getApprovedManifestByName(
   kv: KvLike,
   name: string,
 ): Promise<ToolManifest | undefined> {
@@ -104,7 +104,7 @@ export { originKey as manifestRegistryOriginKey, toolKey as manifestRegistryTool
 
 /**
  * Add newly generated tools as drafts. A tool name already present in the
- * entry — draft, blessed, or declined — is skipped: automatic generation
+ * entry — draft, approved, or declined — is skipped: automatic generation
  * never overwrites a human's prior decision, and a re-run that finds the
  * same tool again is a no-op for it.
  */
@@ -125,10 +125,10 @@ export async function recordDraftTools(
 }
 
 /**
- * Bless one tool by name. Writes the per-origin entry (source of truth for
+ * Approve one tool by name. Writes the per-origin entry (source of truth for
  * listing) and the `tool:<name>` key (source of truth for `manifestFor`'s
  * O(1) lookup) — two KV writes, not a transaction; if the second fails the
- * tool shows as blessed in listings but `manifestFor` still misses it until
+ * tool shows as approved in listings but `manifestFor` still misses it until
  * a retry. Acceptable for a human-paced, one-tool-at-a-time action.
  *
  * The manifest is read out with `find` before the map rather than captured
@@ -136,22 +136,22 @@ export async function recordDraftTools(
  * its narrowing, and the `tool:<name>` write must not be reachable with an
  * unnarrowed value.
  */
-export async function blessTool(
+export async function approveTool(
   kv: KvLike,
   origin: string,
   name: string,
 ): Promise<RegistryEntry | null> {
   const entry = await getRegistryEntry(kv, origin);
   if (!entry) return null;
-  const blessedManifest = entry.tools.find((t) => t.manifest.name === name)?.manifest;
+  const approvedManifest = entry.tools.find((t) => t.manifest.name === name)?.manifest;
   const now = Date.now();
   const tools = entry.tools.map((t) =>
-    t.manifest.name === name ? { ...t, status: "blessed" as const, blessedAt: now } : t,
+    t.manifest.name === name ? { ...t, status: "approved" as const, approvedAt: now } : t,
   );
   const next: RegistryEntry = { tools };
   await kv.put(originKey(origin), JSON.stringify(next));
-  if (blessedManifest) {
-    await kv.put(toolKey(name), JSON.stringify(blessedManifest));
+  if (approvedManifest) {
+    await kv.put(toolKey(name), JSON.stringify(approvedManifest));
   }
   return next;
 }

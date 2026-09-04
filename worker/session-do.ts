@@ -40,7 +40,7 @@ import { generateManifest } from "./generate-manifest";
 import {
   getRegistryEntry,
   recordDraftTools,
-  blessTool,
+  approveTool,
   declineTool,
 } from "./manifest-registry";
 import { buildToolList } from "./mcp/tools";
@@ -613,7 +613,7 @@ export class SessionDO extends DurableObject<Env> {
         await this.onGenerateManifest(ws, msg.origin);
         return;
       case "manifest_decision":
-        await this.onManifestDecision(msg.origin, msg.name, msg.bless);
+        await this.onManifestDecision(msg.origin, msg.name, msg.approve);
         return;
     }
   }
@@ -1424,7 +1424,7 @@ export class SessionDO extends DurableObject<Env> {
   /**
    * Automatic entry point. Called from a "no WebMCP" miss in
    * list_remote_tools / call_remote_tool. Never regenerates for an origin
-   * that already has any registry entry — draft, blessed, or declined — a
+   * that already has any registry entry — draft, approved, or declined — a
    * human re-triggers manually (onGenerateManifest) if they want another
    * pass. Fire-and-forget: callers do `void this.maybeAutoGenerate(...)`.
    */
@@ -1513,11 +1513,11 @@ export class SessionDO extends DurableObject<Env> {
     }
   }
 
-  /** Bless or decline one draft tool. Re-broadcasts whatever is still pending. */
-  private async onManifestDecision(origin: string, name: string, bless: boolean): Promise<void> {
+  /** Approve or decline one draft tool. Re-broadcasts whatever is still pending. */
+  private async onManifestDecision(origin: string, name: string, approve: boolean): Promise<void> {
     const kv = this.env.MANIFEST_REGISTRY;
     if (!kv) return;
-    const entry = bless ? await blessTool(kv, origin, name) : await declineTool(kv, origin, name);
+    const entry = approve ? await approveTool(kv, origin, name) : await declineTool(kv, origin, name);
     const pending = (entry?.tools ?? [])
       .filter((t) => t.status === "draft")
       .map((t) => t.manifest);

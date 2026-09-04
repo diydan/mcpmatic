@@ -2,10 +2,10 @@ import type { ManifestStep } from "./manifest";
 
 /**
  * One plain-language line per step, for the manifest review screen — the
- * human reads exactly what a generated tool will do before blessing it.
+ * human reads exactly what a generated tool will do before approving it.
  *
  * Transparency substitutes for automated judgment here (SPEC, Review &
- * bless): this renders every step faithfully and never tries to score or
+ * approve): this renders every step faithfully and never tries to score or
  * flag which of them look destructive.
  */
 export function describeStep(step: ManifestStep): string {

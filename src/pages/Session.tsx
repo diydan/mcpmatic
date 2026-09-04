@@ -808,7 +808,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             type: "manifest_decision",
             origin: manifestDraft.origin,
             name,
-            bless: ok,
+            approve: ok,
           });
         }}
       />

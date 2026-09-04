@@ -6,7 +6,7 @@
  * absent should not abort the run. That means the loudest signal a broken
  * tool produces is nothing at all. These entries are the other half of the
  * picture: the page's own errors, kept per session so a human reviewing a
- * draft (or debugging a blessed one) can see what the page thought happened.
+ * draft (or debugging a approved one) can see what the page thought happened.
  *
  * Privacy. Unlike the audit table, which deliberately has no value column,
  * console text is written by the site and can quote anything the page had —

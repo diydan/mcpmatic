@@ -1,7 +1,7 @@
 import type { McpToolDescriptor } from "../../shared/mcp";
 import type { ToolManifest } from "../../shared/manifest";
 import { MANIFESTS } from "../manifests";
-import { getRegistryEntry, blessedManifests, type KvLike } from "../manifest-registry";
+import { getRegistryEntry, approvedManifests, type KvLike } from "../manifest-registry";
 
 /**
  * The always-on tools. Same names the WebMCP façade registers, so an
@@ -98,7 +98,7 @@ export async function buildToolList(
   if (kv) {
     for (const origin of consented) {
       const entry = await getRegistryEntry(kv, origin);
-      for (const m of blessedManifests(entry)) {
+      for (const m of approvedManifests(entry)) {
         // A registry entry that disagrees with its own key (mis-keyed data)
         // must never list a tool for an origin the caller didn't consent to.
         if (m.origin !== origin) continue;

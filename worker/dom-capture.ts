@@ -78,7 +78,7 @@ export async function captureInPage(): Promise<Array<{ role: string; name: strin
    * True only if exactly one element in the document carries this id. Real
    * pages do repeat ids, and anchoring on a repeated one produces a selector
    * that silently resolves to the first match: page.click does not error on
-   * a multi-match, it acts on the wrong element — after a human blessed the
+   * a multi-match, it acts on the wrong element — after a human approved the
    * tool believing it targets the other one.
    */
   const idIsUnique = new Map<string, boolean>();

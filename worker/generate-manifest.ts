@@ -88,7 +88,7 @@ function validateManifest(raw: unknown, origin: string): ToolManifest | null {
   // Every fill/type step must draw from a property the tool actually
   // declares. runStep resolves `from` as `args[step.from] ?? ""`, so a step
   // naming a key the schema omits fills the empty string forever: the review
-  // screen reads "fills input#q from q" and the human blesses a tool that
+  // screen reads "fills input#q from q" and the human approves a tool that
   // silently does nothing. The prompt asks for this; the worker enforces it.
   const declared = schemaKeys(inputSchema);
   for (const step of steps) {
@@ -111,7 +111,7 @@ function validateManifest(raw: unknown, origin: string): ToolManifest | null {
  *
  * Called only from the background generation path — never inside a tool
  * call's request/response cycle. Nothing returned here is callable: the
- * caller stores these as drafts, and a human blesses each one first.
+ * caller stores these as drafts, and a human approves each one first.
  */
 export async function generateManifest(
   env: ModelEnv,

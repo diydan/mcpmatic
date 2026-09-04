@@ -34,7 +34,7 @@ describe("MCP tool list", () => {
 });
 
 describe("buildToolList with a registry", () => {
-  it("includes a blessed generated tool for a consented origin", async () => {
+  it("includes a approved generated tool for a consented origin", async () => {
     const generated: ToolManifest = {
       name: "search_widgets_on_example_com",
       description: "search widgets",
@@ -43,7 +43,7 @@ describe("buildToolList with a registry", () => {
       steps: [{ action: "goto", url: "https://example.com" }],
     };
     const entry: RegistryEntry = {
-      tools: [{ manifest: generated, status: "blessed", generatedAt: 1, blessedAt: 2 }],
+      tools: [{ manifest: generated, status: "approved", generatedAt: 1, approvedAt: 2 }],
     };
     const kv = {
       get: async (key: string) =>
@@ -54,7 +54,7 @@ describe("buildToolList with a registry", () => {
     expect(list.some((t) => t.name === "search_widgets_on_example_com")).toBe(true);
   });
 
-  it("omits a draft (unblessed) generated tool", async () => {
+  it("omits a draft (unapproved) generated tool", async () => {
     const generated: ToolManifest = {
       name: "search_widgets_on_example_com",
       description: "search widgets",
@@ -94,7 +94,7 @@ describe("buildToolList with a registry", () => {
       steps: [{ action: "goto", url: "https://www.kayak.com" }],
     };
     const entry: RegistryEntry = {
-      tools: [{ manifest: generated, status: "blessed", generatedAt: 1, blessedAt: 2 }],
+      tools: [{ manifest: generated, status: "approved", generatedAt: 1, approvedAt: 2 }],
     };
     const kv = {
       get: async (key: string) =>
@@ -115,7 +115,7 @@ describe("buildToolList with a registry", () => {
       steps: [{ action: "goto", url: "https://attacker.example.com" }],
     };
     const entry: RegistryEntry = {
-      tools: [{ manifest: mismatched, status: "blessed", generatedAt: 1, blessedAt: 2 }],
+      tools: [{ manifest: mismatched, status: "approved", generatedAt: 1, approvedAt: 2 }],
     };
     const kv = {
       get: async (key: string) =>

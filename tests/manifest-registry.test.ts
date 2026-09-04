@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   getRegistryEntry,
-  blessedManifests,
-  getBlessedManifestByName,
+  approvedManifests,
+  getApprovedManifestByName,
   recordDraftTools,
-  blessTool,
+  approveTool,
   declineTool,
   type RegistryEntry,
   type KvLike,
@@ -34,7 +34,7 @@ describe("getRegistryEntry", () => {
 
   it("parses a stored entry", async () => {
     const entry: RegistryEntry = {
-      tools: [{ manifest: TOOL, status: "blessed", generatedAt: 1, blessedAt: 2 }],
+      tools: [{ manifest: TOOL, status: "approved", generatedAt: 1, approvedAt: 2 }],
     };
     const kv = fakeKv({ "origin:https://example.com": JSON.stringify(entry) });
     expect(await getRegistryEntry(kv, "https://example.com")).toEqual(entry);
@@ -51,37 +51,37 @@ describe("getRegistryEntry", () => {
   });
 });
 
-describe("blessedManifests", () => {
+describe("approvedManifests", () => {
   it("returns an empty array for a null entry", () => {
-    expect(blessedManifests(null)).toEqual([]);
+    expect(approvedManifests(null)).toEqual([]);
   });
 
-  it("keeps only blessed tools, unwrapped to ToolManifest", () => {
+  it("keeps only approved tools, unwrapped to ToolManifest", () => {
     const entry: RegistryEntry = {
       tools: [
-        { manifest: TOOL, status: "blessed", generatedAt: 1, blessedAt: 2 },
+        { manifest: TOOL, status: "approved", generatedAt: 1, approvedAt: 2 },
         { manifest: { ...TOOL, name: "draft_tool" }, status: "draft", generatedAt: 1 },
         { manifest: { ...TOOL, name: "declined_tool" }, status: "declined", generatedAt: 1 },
       ],
     };
-    expect(blessedManifests(entry)).toEqual([TOOL]);
+    expect(approvedManifests(entry)).toEqual([TOOL]);
   });
 });
 
-describe("getBlessedManifestByName", () => {
+describe("getApprovedManifestByName", () => {
   it("returns undefined when there is no tool key", async () => {
     const kv = fakeKv({});
-    expect(await getBlessedManifestByName(kv, "search_widgets_on_example_com")).toBeUndefined();
+    expect(await getApprovedManifestByName(kv, "search_widgets_on_example_com")).toBeUndefined();
   });
 
   it("parses the stored manifest", async () => {
     const kv = fakeKv({ "tool:search_widgets_on_example_com": JSON.stringify(TOOL) });
-    expect(await getBlessedManifestByName(kv, "search_widgets_on_example_com")).toEqual(TOOL);
+    expect(await getApprovedManifestByName(kv, "search_widgets_on_example_com")).toEqual(TOOL);
   });
 
   it("returns undefined for a malformed stored value (missing required fields)", async () => {
     const kv = fakeKv({ "tool:bad": JSON.stringify({ name: "bad" }) });
-    expect(await getBlessedManifestByName(kv, "bad")).toBeUndefined();
+    expect(await getApprovedManifestByName(kv, "bad")).toBeUndefined();
   });
 });
 
@@ -106,34 +106,34 @@ describe("recordDraftTools", () => {
 
   it("does not duplicate a tool name already present in any status", async () => {
     const existing: RegistryEntry = {
-      tools: [{ manifest: TOOL, status: "blessed", generatedAt: 1, blessedAt: 2 }],
+      tools: [{ manifest: TOOL, status: "approved", generatedAt: 1, approvedAt: 2 }],
     };
     const store: Record<string, string> = {
       "origin:https://example.com": JSON.stringify(existing),
     };
     const entry = await recordDraftTools(writableKv(store), "https://example.com", [TOOL]);
     expect(entry.tools).toHaveLength(1);
-    expect(entry.tools[0].status).toBe("blessed");
+    expect(entry.tools[0].status).toBe("approved");
   });
 });
 
-describe("blessTool", () => {
-  it("marks the named tool blessed and writes the tool: lookup key", async () => {
+describe("approveTool", () => {
+  it("marks the named tool approved and writes the tool: lookup key", async () => {
     const existing: RegistryEntry = {
       tools: [{ manifest: TOOL, status: "draft", generatedAt: 1 }],
     };
     const store: Record<string, string> = {
       "origin:https://example.com": JSON.stringify(existing),
     };
-    const entry = await blessTool(writableKv(store), "https://example.com", TOOL.name);
-    expect(entry?.tools[0].status).toBe("blessed");
-    expect(entry?.tools[0].blessedAt).toBeGreaterThan(0);
+    const entry = await approveTool(writableKv(store), "https://example.com", TOOL.name);
+    expect(entry?.tools[0].status).toBe("approved");
+    expect(entry?.tools[0].approvedAt).toBeGreaterThan(0);
     expect(JSON.parse(store[`tool:${TOOL.name}`])).toEqual(TOOL);
   });
 
   it("returns null when the origin has no entry", async () => {
     const kv: KvLike = { get: vi.fn(async () => null), put: vi.fn(async () => {}) };
-    expect(await blessTool(kv, "https://example.com", TOOL.name)).toBeNull();
+    expect(await approveTool(kv, "https://example.com", TOOL.name)).toBeNull();
   });
 
   it("writes no tool: key when the name is not in the entry", async () => {
@@ -143,7 +143,7 @@ describe("blessTool", () => {
     const store: Record<string, string> = {
       "origin:https://example.com": JSON.stringify(existing),
     };
-    await blessTool(writableKv(store), "https://example.com", "not_a_tool");
+    await approveTool(writableKv(store), "https://example.com", "not_a_tool");
     expect(store["tool:not_a_tool"]).toBeUndefined();
   });
 });

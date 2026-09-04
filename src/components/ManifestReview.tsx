@@ -8,13 +8,13 @@ export type ManifestDraft = {
 
 type Props = {
   draft: ManifestDraft | null;
-  onDecide: (name: string, bless: boolean) => void;
+  onDecide: (name: string, approve: boolean) => void;
 };
 
 /**
  * Confirms a *tool* should exist at all, once, before it is ever callable —
- * distinct from BlessGate, which confirms a *value* leaving the device on a
- * specific call. Bless is per-tool, never all-or-nothing for the origin.
+ * distinct from ApprovalDialog, which confirms a *value* leaving the device on
+ * a specific call. Approval is per-tool, never all-or-nothing for the origin.
  */
 export function ManifestReview({ draft, onDecide }: Props) {
   if (!draft || draft.tools.length === 0) return null;
@@ -53,7 +53,7 @@ export function ManifestReview({ draft, onDecide }: Props) {
                   className="primary"
                   onClick={() => onDecide(tool.name, true)}
                 >
-                  Bless
+                  Approve
                 </button>
               </div>
             </li>

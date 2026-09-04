@@ -1,6 +1,6 @@
 import { ALWAYS_ON_TOOLS, type ToolManifest } from "../shared/manifest";
 import { allManifests } from "../shared/stores";
-import { getBlessedManifestByName, type KvLike } from "./manifest-registry";
+import { getApprovedManifestByName, type KvLike } from "./manifest-registry";
 
 export const MANIFESTS: ToolManifest[] = allManifests();
 
@@ -22,7 +22,7 @@ export async function manifestFor(
   const known = byName.get(name);
   if (known) return known;
   if (!kv) return undefined;
-  return getBlessedManifestByName(kv, name);
+  return getApprovedManifestByName(kv, name);
 }
 
 export async function originOfTool(name: string, kv?: KvLike): Promise<string | null> {

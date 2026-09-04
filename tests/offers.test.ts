@@ -16,7 +16,7 @@ describe("offersFor", () => {
     expect(offers[0].kind).toBe("profile");
   });
 
-  it("suggests the council lookup as a blessed profile action", () => {
+  it("suggests the council lookup as a approved profile action", () => {
     const offers = offersFor({
       registered: [
         {

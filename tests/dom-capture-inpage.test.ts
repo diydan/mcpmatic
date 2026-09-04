@@ -9,7 +9,7 @@ import { captureInPage } from "../worker/dom-capture";
  * tests in dom-capture.test.ts never run its body. These exercise it against
  * a real DOM — the selectors it emits are replayed verbatim by runStep, so a
  * selector that resolves to the wrong element is a tool that does the wrong
- * thing after a human has blessed it.
+ * thing after a human has approved it.
  */
 function setBody(html: string) {
   document.body.innerHTML = html;

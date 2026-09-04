@@ -70,7 +70,7 @@ export type ClientMessage =
   | { v: 1; type: "screencast"; on: boolean }
   | { v: 1; type: "autonomous"; on: boolean }
   | { v: 1; type: "generate_manifest"; origin: string }
-  | { v: 1; type: "manifest_decision"; origin: string; name: string; bless: boolean }
+  | { v: 1; type: "manifest_decision"; origin: string; name: string; approve: boolean }
   /**
    * The console's answer to an `approval_request`. `fills` is keyed by dotted
    * profile path, matching `resolveFields` output and what `step.from` reads.
