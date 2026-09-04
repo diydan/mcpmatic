@@ -14,8 +14,8 @@
  *
  * The client_secret is echoed back in the response. Per RFC 7591 §3.2.1
  * the server MAY include `client_secret` in the response and the spec only
- * forbids it for public clients — for Phase 1.5 all registered clients
- * are confidential. This keeps the test path trivial.
+ * forbids it for public clients — all registered clients today are
+ * confidential. This keeps the test path trivial.
  */
 import { isPrivateUrl } from "../is-private-url";
 import { makeResolve4 } from "../doh-resolve4";

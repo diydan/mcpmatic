@@ -14,7 +14,7 @@
  *    looked up under `refresh:<rt>`; clientId must match; on success, a new
  *    access + refresh pair is written, and the *old* refresh key is deleted.
  *
- * Client authentication in this Phase 1.5 handler is via form params
+ * Client authentication in this handler is via form params
  * (`client_id` + `client_secret`). Confidential clients per RFC 6749 §2.3.1.
  *
  * Security headers — `FACADE_HEADERS` + `Cache-Control: no-store` — are
@@ -48,7 +48,7 @@ const NO_STORE = { "Cache-Control": "no-store" };
 const ACCESS_TOKEN_TTL_SECONDS = 3600;
 /** RFC 6749 §4.2.2: 30 days in seconds. */
 const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30;
-/** Hard-coded scope for Phase 1.5 MCP tools. */
+/** Hard-coded scope for MCP tools. */
 const SCOPE = "mcp:tools";
 
 export async function handleToken(request: Request, env: Env): Promise<Response> {
