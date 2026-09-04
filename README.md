@@ -200,7 +200,7 @@ Façade headers (`public/_headers`): `Origin-Agent-Cluster: ?1`,
   when a site redesigns.
 - Verified against Allbirds and Brooklinen. The `/mcp` surface is proven
   against the MCP SDK; individual MCP clients are listed in
-  `tests/MCP_CLIENTS.md`.
+  `docs/MCP_CLIENTS.md`.
 
 Design notes live in commits and tests.
 

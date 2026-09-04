@@ -1,4 +1,4 @@
-# MCP Client Test Matrix
+# Connecting MCP clients
 
 Tests below are run by hand against real MCP-capable clients. Each row in the
 decision matrix at the bottom determines the next phase of work.
@@ -45,7 +45,7 @@ field, document this clearly — it determines the auth design.
 
 ## Findings
 
-(populated by the Phase 1.5 work — further manual testing against real
+(populated by the OAuth work — further manual testing against real
 Claude Desktop and ChatGPT builds still pending a deployed Worker URL)
 
 ### Wire-format compatibility
@@ -54,16 +54,15 @@ Claude Desktop and ChatGPT builds still pending a deployed Worker URL)
 `@modelcontextprotocol/sdk` (1.30+) through the full OAuth flow —
 register → authorize → token → SDK `connect()` → `serverInfo.name === "browsermatic"`.
 The SDK's `client.connect()` succeeds without modifying either side, which
-proves the Phase 1.5 OAuth surface works against any spec-compliant MCP
-client.
+proves the OAuth surface works against any spec-compliant MCP client.
 
 ### Auth at `/mcp`
 
 Two bearer shapes work:
 
-- **64 hex chars** (case-insensitive) — Phase 1 session token, pass-through
+- **64 hex chars** (case-insensitive) — session token, pass-through
   to the SessionDO. No I/O in the bridge for this branch.
-- **43 base64url chars** — Phase 1.5 OAuth access token, resolved via
+- **43 base64url chars** — OAuth access token, resolved via
   `worker/oauth/mcp-bridge.ts` → `OAUTH_TOKENS.get("token:<access_token>")`
   → `userSessionToken` → SessionDO.
 
@@ -109,15 +108,15 @@ primary enforcement; the payload's `expiresAt` is a second-line defense).
 Still pending — requires a deployed Worker URL. The
 `tests/oauth-smoke.sh` script is the post-deploy manual procedure; the
 engineer should run it against `https://browsermatic.dev`
-after the Phase 1.5 deploy (which requires
+after the OAuth deploy (which requires
 `wrangler kv namespace create OAUTH_TOKENS` first to replace the
 `"to-be-created"` placeholder id in `wrangler.jsonc`).
 
 ### Latent bugs in `worker/mcp/server.ts` fixed in Task 10
 
-The SDK-driven e2e flushed out two real bugs that Phase 1's hand-rolled
-tests (which used `id: 1`) missed. Both would have blocked every
-compliant MCP client:
+The SDK-driven e2e flushed out two real bugs that the hand-rolled tests
+(which used `id: 1`) missed. Both would have blocked every compliant MCP
+client:
 
 1. `new Response("", { status: 204 })` → `new Response(null, { status: 204 })`.
    Per RFC 9110 §6.4.1 a 204 response MUST NOT include a body. Cloudflare's
@@ -132,6 +131,6 @@ compliant MCP client:
 
 | Outcome | What it means | What we ship |
 |---|---|---|
-| Both clients do full OAuth | Plan was correct | OAuth 2.0 + PKCE in Phase 1.5 |
+| Both clients do full OAuth | Plan was correct | OAuth 2.0 + PKCE |
 | Claude OAuth, ChatGPT static tokens only | Spec-compliance is fine; ChatGPT's client is the constraint | Static token path for ChatGPT; OAuth for everyone else; both on the same backend |
 | Neither does OAuth | MCP support is incomplete in both clients | Hold MCP surface; ship when clients catch up |
