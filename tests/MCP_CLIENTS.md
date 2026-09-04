@@ -108,7 +108,7 @@ primary enforcement; the payload's `expiresAt` is a second-line defense).
 
 Still pending — requires a deployed Worker URL. The
 `tests/oauth-smoke.sh` script is the post-deploy manual procedure; the
-engineer should run it against `https://mcpmatic.dan-3c7.workers.dev`
+engineer should run it against `https://browsermatic.dev`
 after the Phase 1.5 deploy (which requires
 `wrangler kv namespace create OAUTH_TOKENS` first to replace the
 `"to-be-created"` placeholder id in `wrangler.jsonc`).

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Manual smoke test for Phases A–C against a live mcpmatic Worker.
+# Manual smoke test for Phases A–C against a live browsermatic Worker.
 #
 # Everything in the test suite uses a fake: no real authenticator, no live
 # storefront, no deployed Worker. This script is the part that cannot be
@@ -8,7 +8,7 @@
 # Shopify storefront answering with its own WebMCP schemas.
 #
 # Usage:
-#   BASE_URL=https://mcpmatic.example ./tests/phases-smoke.sh
+#   BASE_URL=https://browsermatic.example ./tests/phases-smoke.sh
 #
 # Not run in CI. Run it after `pnpm run deploy`, which must apply the new
 # v4 (AccountDO) and v5 (SiteDO) migrations.
