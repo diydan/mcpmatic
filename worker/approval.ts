@@ -15,7 +15,7 @@
  *
  * The trigger is *missing* fills, not declared ones: a façade-initiated call
  * arrives with its fields already merged, so it runs straight through and the
- * human is not asked to bless the same action twice.
+ * human is not asked to approve the same action twice.
  */
 export function missingFills(
   declared: readonly string[] | undefined,
@@ -32,7 +32,7 @@ export function missingFills(
  * `{"address.line1": "…"}`, satisfy `missingFills`, and route around the
  * approval entirely — and the audit row would then name profile fields that
  * were never the user's profile. The façade path is deliberately not stripped:
- * it merges its fields *after* its own bless.
+ * it merges its fields *after* its own approval.
  */
 export function stripProfilePaths(
   declared: readonly string[] | undefined,

@@ -15,9 +15,9 @@ const PROFILE: Record<string, string> = {
   "shopper.lastName": "Chi",
 };
 
-function deps(bless: () => Promise<boolean>) {
+function deps(approve: () => Promise<boolean>) {
   return {
-    bless,
+    approve,
     resolveFields: (paths: readonly string[]) =>
       Object.fromEntries(paths.map((p) => [p, PROFILE[p]]).filter(([, v]) => v)),
   };
@@ -44,9 +44,9 @@ describe("answerApproval", () => {
   });
 
   it("shows the human the origin and the exact field names", async () => {
-    const bless = vi.fn(async () => true);
-    await answerApproval(REQ, deps(bless));
-    expect(bless).toHaveBeenCalledWith({
+    const approve = vi.fn(async () => true);
+    await answerApproval(REQ, deps(approve));
+    expect(approve).toHaveBeenCalledWith({
       origin: REQ.origin,
       tool: REQ.tool,
       fieldNames: REQ.fieldNames,
@@ -76,13 +76,13 @@ describe("answerApproval respects the deadline the server set", () => {
   it("does not ask a human about a request that has already expired", async () => {
     // The server has stopped waiting. Raising a dialog here invites a click
     // that can do nothing, which is worse than no dialog.
-    const bless = vi.fn(async () => true);
+    const approve = vi.fn(async () => true);
     const dismiss = vi.fn();
     const msg = await answerApproval(
       { ...soon, expiresAt: Date.now() - 1 },
-      { ...deps(bless), dismiss },
+      { ...deps(approve), dismiss },
     );
-    expect(bless).not.toHaveBeenCalled();
+    expect(approve).not.toHaveBeenCalled();
     expect(msg.ok).toBe(false);
   });
 

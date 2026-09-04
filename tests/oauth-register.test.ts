@@ -82,7 +82,8 @@ describe("handleRegister (POST /oauth/register) — RFC 7591 dynamic client regi
     expect(typeof body.createdAt).toBe("number");
 
     // DO was called once with the canonical stub URL and the serialized
-    // client as JSON body.
+    // client as JSON body. The persisted shape has the salted SHA-256 hash
+    // and salt, NOT the plaintext (which is echoed to the caller once).
     expect(getByName).toHaveBeenCalledTimes(1);
     expect(getByName).toHaveBeenCalledWith(body.clientId);
     expect(doFetch).toHaveBeenCalledTimes(1);
@@ -92,9 +93,12 @@ describe("handleRegister (POST /oauth/register) — RFC 7591 dynamic client regi
     ];
     expect(url).toBe("https://stub/register");
     expect(init?.method).toBe("POST");
-    expect(JSON.parse(init?.body as string)).toEqual({
+    const persisted = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(persisted).not.toHaveProperty("clientSecret");
+    expect(persisted).toEqual({
       clientId: body.clientId,
-      clientSecret: body.clientSecret,
+      clientSecretHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      clientSecretSalt: expect.stringMatching(/^[A-Za-z0-9_\-]{22}$/),
       redirectUris: ["https://example.com/cb"],
       clientName: "unnamed",
       createdAt: body.createdAt,

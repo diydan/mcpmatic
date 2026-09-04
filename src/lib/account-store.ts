@@ -1,6 +1,4 @@
-// Storage keys keep the old prefix on purpose: renaming this one orphans
-// every account that already holds a grant list, and the key is never shown.
-const KEY = "mcpmatic.accountId";
+const KEY = "browsermatic.accountId";
 
 type MinimalStorage = {
   getItem: (key: string) => string | null;

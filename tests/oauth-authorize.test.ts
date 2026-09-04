@@ -134,7 +134,11 @@ function postReq(params: Record<string, string>): Request {
 
 const CLIENT: OAuthClient = {
   clientId: "client-abc",
-  clientSecret: "secret-xyz",
+  // /authorize never reads clientSecretHash/Salt — fixture values are
+  // placeholders to satisfy the type after the audit fix that moved the
+  // plaintext off the wire. See worker/oauth/secret.ts.
+  clientSecretHash: "a".repeat(64),
+  clientSecretSalt: "test-salt-fixed-value-22",
   redirectUris: ["https://example.com/cb", "https://example.com/cb?x=1"],
   clientName: "test client",
   createdAt: 1700000000000,

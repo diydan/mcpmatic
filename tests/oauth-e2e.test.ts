@@ -1,7 +1,7 @@
 /**
  * @vitest-environment node
  *
- * End-to-end OAuth flow integration test (Phase 1.5).
+ * End-to-end OAuth flow integration test.
  *
  * Walks the full sequence a real MCP client would walk:
  *
@@ -40,7 +40,7 @@ import { handleRegister } from "../worker/oauth/register";
 import { handleAuthorize } from "../worker/oauth/authorize";
 import { handleToken } from "../worker/oauth/token";
 import { handleMcp } from "../worker/mcp/server";
-import type { OAuthClient, AuthCode, AccessToken } from "../worker/oauth/types";
+import type { OAuthClient, OAuthClientRegistration, AuthCode, AccessToken } from "../worker/oauth/types";
 
 // RFC 7636 §4.6 KAT — verifier + its S256 challenge. Used here so the real
 // `verifyPkce` (not a mock) accepts the verifier.
@@ -241,15 +241,23 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
       shim.env,
     );
     expect(registerRes.status).toBe(201);
-    const registered = (await registerRes.json()) as OAuthClient;
+    const registered = (await registerRes.json()) as OAuthClientRegistration;
     expect(registered.clientId).toMatch(UUID_RE);
     expect(registered.clientSecret).toMatch(BASE64URL_RE);
     expect(registered.redirectUris).toEqual([REDIRECT_URI]);
     expect(registered.clientName).toBe(CLIENT_NAME);
 
     // Sanity: the client landed in our shim's OAUTH_CLIENT map, keyed by
-    // the same clientId. This is what OAuthClientDO does in production.
-    expect(shim.clients.get(registered.clientId)).toEqual(registered);
+    // the same clientId. The stored shape carries the salted hash, not
+    // the plaintext (the plaintext is echoed only in the response), so we
+    // assert the storage shape directly.
+    const stored = shim.clients.get(registered.clientId);
+    expect(stored).toBeDefined();
+    expect(stored!.clientId).toBe(registered.clientId);
+    expect(stored!.redirectUris).toEqual(registered.redirectUris);
+    expect(stored!.clientName).toBe(registered.clientName);
+    expect(stored!.clientSecretHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(stored!.clientSecretSalt).toMatch(/^[A-Za-z0-9_\-]{22}$/);
 
     // ---- 2. Authorize: GET returns HTML, POST consent=approve returns 302
     // First the consent GET — this is what a browser would render. It
@@ -425,7 +433,7 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
       }),
       shim.env,
     );
-    const registered = (await registerRes.json()) as OAuthClient;
+    const registered = (await registerRes.json()) as OAuthClientRegistration;
 
     const forgedToken = "f".repeat(64);
     expect(shim.sessions.has(forgedToken)).toBe(false);
@@ -460,7 +468,7 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
       }),
       shim.env,
     );
-    const registered = (await registerRes.json()) as OAuthClient;
+    const registered = (await registerRes.json()) as OAuthClientRegistration;
 
     const authorizeRes = await handleAuthorize(
       formReq("https://worker.local/oauth/authorize", {
@@ -512,7 +520,7 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
     const registered = (await (await handleRegister(
       jsonReq("https://worker.local/oauth/register", { redirect_uris: [REDIRECT_URI] }),
       shim.env,
-    )).json()) as OAuthClient;
+    )).json()) as OAuthClientRegistration;
 
     const authorizeRes = await handleAuthorize(
       formReq("https://worker.local/oauth/authorize", {

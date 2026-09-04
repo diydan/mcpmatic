@@ -11,26 +11,27 @@ import type {
 import { ChatPanel } from "../components/ChatPanel";
 import { Viewport } from "../components/Viewport";
 import { Consent } from "../components/Consent";
-import { BlessGate } from "../components/BlessGate";
-import { ManifestReview, type ManifestDraft } from "../components/ManifestReview";
+import { ApprovalDialog } from "../components/ApprovalDialog";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Header } from "../components/Header";
 import { openBridge } from "../lib/bridge";
 import {
   createRegistration,
-  type BlessRequest,
+  type ApprovalRequest,
   type ObservedByOrigin,
   type Registration,
 } from "../lib/register-all";
 import { Surface } from "../components/Surface";
+import { ManifestReview, type ManifestDraft } from "../components/ManifestReview";
 import { profileStore, seedIfEmpty } from "../lib/profile-store";
 import { answerApproval } from "../lib/approval-reply";
 import { accountId } from "../lib/account-store";
 import { PasskeyBar } from "../components/PasskeyBar";
-import { unionOrigins } from "../../shared/origin";
+import { displayHosts, unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
 import { navigationHref, normaliseOrigin } from "../../shared/origin";
+import { recordRecentSite } from "../lib/recent-sites";
 
 const MANIFESTS = allManifests();
 const ORIGINS = STORES.map((s) => ({
@@ -44,10 +45,27 @@ type Line = {
   text: string;
 };
 
-function originFromNavState(state: unknown): string | null {
+function unwrapNavState(state: unknown): Record<string, unknown> | null {
   if (!state || typeof state !== "object") return null;
-  const origin = (state as { origin?: unknown }).origin;
+  const raw = state as Record<string, unknown>;
+  if (raw.usr && typeof raw.usr === "object") {
+    return raw.usr as Record<string, unknown>;
+  }
+  return raw;
+}
+
+function originFromNavState(state: unknown): string | null {
+  const unwrapped = unwrapNavState(state);
+  if (!unwrapped) return null;
+  const origin = unwrapped.origin;
   return typeof origin === "string" && origin ? origin : null;
+}
+
+function promptFromNavState(state: unknown): string | null {
+  const unwrapped = unwrapNavState(state);
+  if (!unwrapped) return null;
+  const prompt = unwrapped.initialPrompt;
+  return typeof prompt === "string" && prompt.trim() ? prompt.trim() : null;
 }
 
 type SessionRole = "console" | "facade";
@@ -60,12 +78,16 @@ type SessionRole = "console" | "facade";
 export function Session({ role = "facade" }: { role?: SessionRole }) {
   const isConsole = role === "console";
   const { sessionToken = "" } = useParams();
-  const seededFromNav = originFromNavState(useLocation().state);
+  const navState = useLocation().state;
+  const seededFromNav = originFromNavState(navState);
+  const initialPromptFromNav = promptFromNavState(navState);
+  const initialPromptSent = useRef(false);
+  const [viewMode, setViewMode] = useState<"normal" | "tech">("normal");
   const [tools, setTools] = useState<ToolSchema[]>([]);
   const [lines, setLines] = useState<Line[]>([
     {
       kind: "system",
-      text: "You browse; ChatGPT calls tools on this page. Grant an origin to add its tools. Shopify stores proxy their native WebMCP; Kayak and GOV.UK are synthesised. Observed tools from the open page are registered origin-qualified.",
+      text: "👋 Welcome! I'm your AI browsing assistant. Ask me to compare products, find deals, look up information, or fill forms. Watch what I do in the browser window on your right.",
     },
   ]);
   const [audit, setAudit] = useState<AuditRow[]>([]);
@@ -82,29 +104,29 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
   const [pageUrl, setPageUrl] = useState<string | null>(seededFromNav);
   const [remoteTools, setRemoteTools] = useState<DiscoveredTool[]>([]);
   const [autonomous, setAutonomous] = useState(false);
-  const [bless, setBless] = useState<BlessRequest | null>(null);
+  const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [manifestDraft, setManifestDraft] = useState<ManifestDraft | null>(null);
   const [mapSiteBusy, setMapSiteBusy] = useState(false);
-  const blessWait = useRef<((ok: boolean) => void) | null>(null);
+  const approvalWait = useRef<((ok: boolean) => void) | null>(null);
   /**
    * One dialog at a time. A second request arriving while one is open is
    * denied rather than replacing it — replacing would strand whoever is
    * waiting on the first, and there is only one human here to answer anyway.
    */
   /** Close a dialog the server has stopped waiting on, freeing the slot. */
-  const dismissBless = useCallback(() => {
-    blessWait.current = null;
-    setBless(null);
+  const dismissApproval = useCallback(() => {
+    approvalWait.current = null;
+    setApproval(null);
   }, []);
-  const askBless = useCallback(
-    (req: BlessRequest) =>
+  const askApproval = useCallback(
+    (req: ApprovalRequest) =>
       new Promise<boolean>((resolve) => {
-        if (blessWait.current) {
+        if (approvalWait.current) {
           resolve(false);
           return;
         }
-        blessWait.current = resolve;
-        setBless(req);
+        approvalWait.current = resolve;
+        setApproval(req);
       }),
     [],
   );
@@ -159,7 +181,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      let seeded: string[] = [];
+      let seeded: string[] = seededFromNav ? [seededFromNav] : [];
       // Claim the session for this browser's account first, so the grants it
       // already carries come back before we read consent. A session that was
       // never claimed, or a browser with no storage, simply skips this and
@@ -208,25 +230,26 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
       const next = new Set(seeded);
       setConsented(next);
       setPageOrigin((o) => o ?? seeded[0]);
-      setPageUrl((u) => u ?? seeded[0]);
-      const reg = registrationRef.current;
-      if (reg) await syncTools(reg, next, observedRef.current);
       setLines((l) => [
         ...l,
         {
           kind: "system",
-          text: `already granted: ${seeded.join(", ")}`,
+          text: `Connected to ${displayHosts(seeded).join(", ")}`,
         },
       ]);
-      // Open the first seeded origin so the viewport is not empty and ChatGPT
-      // sees the remote tools as soon as they register.
-      try {
-        const mc = ensureModelContext();
-        const listed = await mc.getTools();
-        const nav = listed.find((t) => t.name === "navigate_to");
-        if (nav) await mc.executeTool(nav, { origin: seeded[0] });
-      } catch {
-        /* browser binding missing; tools still register */
+      // If this is a direct site visit (not a general task prompt), open the
+      // seeded origin so the viewport renders the site. If it is a task prompt,
+      // let the AI agent drive navigation to relevant sites instead of pre-forcing one.
+      if (!initialPromptFromNav && seeded[0]) {
+        try {
+          recordRecentSite(seeded[0]);
+          const mc = ensureModelContext();
+          const listed = await mc.getTools();
+          const nav = listed.find((t) => t.name === "navigate_to");
+          if (nav) await mc.executeTool(nav, { origin: seeded[0] });
+        } catch {
+          /* browser binding missing; tools still register */
+        }
       }
     })();
     return () => {
@@ -240,118 +263,160 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
     const onChange = () => void refreshTools();
     mc.addEventListener("toolchange", onChange);
 
-    const bridge = openBridge(sessionToken, {
-      onClose: () => {
-        setBusy(false);
-        setLines((l) => [
-          ...l,
-          {
-            kind: "system",
-            text: "bridge closed — the session expired, or another tab took it over. Reload to reconnect.",
-          },
-        ]);
-      },
-      onMessage: (msg: ServerMessage) => {
-        if (msg.type === "frame") setJpeg(msg.jpeg);
-        if (msg.type === "state") {
-          setDriving(msg.driving);
-          setBrowser(msg.browser);
-          if (msg.origin) setPageOrigin(msg.origin);
-          if (msg.url) setPageUrl(msg.url);
-          if (typeof msg.autonomous === "boolean") setAutonomous(msg.autonomous);
-          if (msg.consented) {
-            const next = new Set(msg.consented);
-            const same =
-              next.size === consentedRef.current.size &&
-              [...next].every((o) => consentedRef.current.has(o));
-            if (!same) {
-              consentedRef.current = next;
-              setConsented(next);
-              const reg = registrationRef.current;
-              if (reg) {
-                void syncTools(reg, next, observedRef.current);
-              }
-            }
-          }
-          if (msg.origin && msg.remoteTools) {
-            const key = `${msg.origin}:${msg.remoteTools.map((t) => t.name).join(",")}`;
-            setRemoteTools(msg.remoteTools);
-            if (key !== observedKeyRef.current) {
-              observedKeyRef.current = key;
-              observedRef.current = {
-                ...observedRef.current,
-                [msg.origin]: msg.remoteTools,
-              };
-              const reg = registrationRef.current;
-              if (reg) {
-                void syncTools(reg, consentedRef.current, observedRef.current);
-              }
-            }
-          }
-        }
-        if (msg.type === "audit") setAudit(msg.rows);
-        if (msg.type === "approval_request" && isConsole) {
-          // A tool call is suspended on the DO waiting for this. The profile
-          // lives here and nowhere else, so this is the only place that can
-          // answer it.
-          void answerApproval(msg, {
-            bless: askBless,
-            resolveFields: (paths) => profileStore.resolve(paths),
-            dismiss: dismissBless,
-          }).then((reply) => bridgeRef.current?.send(reply));
-        }
-        if (msg.type === "assistant") {
-          setLines((l) => [...l, { kind: "assistant", text: msg.content }]);
+    let bridgeOpen = false;
+    let initialSyncDone = false;
+
+    const maybeDispatchInitialPrompt = async () => {
+      if (!initialPromptFromNav || initialPromptSent.current) return;
+      if (!bridgeOpen || !initialSyncDone) return;
+      initialPromptSent.current = true;
+      setBusy(true);
+      setLines((l) => [...l, { kind: "user", text: initialPromptFromNav }]);
+      const mc = ensureModelContext();
+      const listed = await mc.getTools();
+      bridgeRef.current?.send({
+        v: 1,
+        type: "chat",
+        content: initialPromptFromNav,
+        tools: listed.map(({ name, description, inputSchema }) => ({
+          name,
+          description,
+          inputSchema,
+        })),
+      });
+    };
+
+    const bridge = openBridge(
+      sessionToken,
+      {
+        onOpen: () => {
+          bridgeOpen = true;
+          void maybeDispatchInitialPrompt();
+        },
+        onClose: () => {
           setBusy(false);
-        }
-        if (msg.type === "error") {
-          setLines((l) => [...l, { kind: "system", text: msg.message }]);
-          setBusy(false);
-          setMapSiteBusy(false);
-        }
-        if (msg.type === "manifest_draft") {
-          setMapSiteBusy(false);
-          setManifestDraft(
-            msg.tools.length > 0 ? { origin: msg.origin, tools: msg.tools } : null,
-          );
-        }
-        if (msg.type === "tool_call") {
           setLines((l) => [
             ...l,
-            { kind: "tool", text: `executeTool ${msg.name}` },
+            {
+              kind: "system",
+              text: "bridge closed — the session expired, or another tab took it over. Reload to reconnect.",
+            },
           ]);
-          void (async () => {
-            // Whatever happens below, the DO gets exactly one tool_result for
-            // this call id. Otherwise the agent turn strands and the chat box
-            // stays disabled for the rest of the session.
-            let ok = true;
-            let result = "";
-            try {
-              const listed = await mc.getTools();
-              const tool = listed.find((t) => t.name === msg.name);
-              if (!tool) {
-                ok = false;
-                result = `tool ${msg.name} is not registered on this page`;
-                setLines((l) => [...l, { kind: "system", text: result }]);
-              } else {
-                result = await mc.executeTool(tool, msg.arguments);
-              }
-            } catch (err) {
-              ok = false;
-              result = err instanceof Error ? err.message : "executeTool failed";
-              setLines((l) => [...l, { kind: "system", text: result }]);
+        },
+        onMessage: (msg: ServerMessage) => {
+          if (msg.type === "frame") setJpeg(msg.jpeg);
+          if (msg.type === "state") {
+            setDriving(msg.driving);
+            setBrowser(msg.browser);
+            if (msg.origin) {
+              setPageOrigin(msg.origin);
+              recordRecentSite(msg.origin);
             }
-            bridgeRef.current?.send({
-              v: 1,
-              type: "tool_result",
-              callId: msg.id,
-              ok,
-              result,
-            });
-          })();
-        }
+            if (msg.url) {
+              setPageUrl(msg.url);
+              try {
+                const u = new URL(msg.url);
+                recordRecentSite(u.origin);
+              } catch {
+                /* ignore */
+              }
+            }
+            if (typeof msg.autonomous === "boolean") setAutonomous(msg.autonomous);
+            if (msg.consented) {
+              const next = new Set(msg.consented);
+              const same =
+                next.size === consentedRef.current.size &&
+                [...next].every((o) => consentedRef.current.has(o));
+              if (!same) {
+                consentedRef.current = next;
+                setConsented(next);
+                const reg = registrationRef.current;
+                if (reg) {
+                  void syncTools(reg, next, observedRef.current);
+                }
+              }
+            }
+            if (msg.origin && msg.remoteTools) {
+              const key = `${msg.origin}:${msg.remoteTools.map((t) => t.name).join(",")}`;
+              setRemoteTools(msg.remoteTools);
+              if (key !== observedKeyRef.current) {
+                observedKeyRef.current = key;
+                observedRef.current = {
+                  ...observedRef.current,
+                  [msg.origin]: msg.remoteTools,
+                };
+                const reg = registrationRef.current;
+                if (reg) {
+                  void syncTools(reg, consentedRef.current, observedRef.current);
+                }
+              }
+            }
+          }
+          if (msg.type === "audit") setAudit(msg.rows);
+          if (msg.type === "approval_request" && isConsole) {
+            // A tool call is suspended on the DO waiting for this. The profile
+            // lives here and nowhere else, so this is the only place that can
+            // answer it.
+            void answerApproval(msg, {
+              approve: askApproval,
+              resolveFields: (paths) => profileStore.resolve(paths),
+              dismiss: dismissApproval,
+            }).then((reply) => bridgeRef.current?.send(reply));
+          }
+          if (msg.type === "assistant") {
+            setLines((l) => [...l, { kind: "assistant", text: msg.content }]);
+            setBusy(false);
+          }
+          if (msg.type === "error") {
+            setLines((l) => [...l, { kind: "system", text: msg.message }]);
+            setBusy(false);
+            setMapSiteBusy(false);
+          }
+          if (msg.type === "manifest_draft") {
+            setMapSiteBusy(false);
+            setManifestDraft(
+              msg.tools.length > 0 ? { origin: msg.origin, tools: msg.tools } : null,
+            );
+          }
+          if (msg.type === "tool_call") {
+            setLines((l) => [
+              ...l,
+              { kind: "tool", text: `executeTool ${msg.name}` },
+            ]);
+            void (async () => {
+              // Whatever happens below, the DO gets exactly one tool_result for
+              // this call id. Otherwise the agent turn strands and the chat box
+              // stays disabled for the rest of the session.
+              let ok = true;
+              let result = "";
+              try {
+                const listed = await mc.getTools();
+                const tool = listed.find((t) => t.name === msg.name);
+                if (!tool) {
+                  ok = false;
+                  result = `tool ${msg.name} is not registered on this page`;
+                  setLines((l) => [...l, { kind: "system", text: result }]);
+                } else {
+                  result = await mc.executeTool(tool, msg.arguments);
+                }
+              } catch (err) {
+                ok = false;
+                result = err instanceof Error ? err.message : "executeTool failed";
+                setLines((l) => [...l, { kind: "system", text: result }]);
+              }
+              bridgeRef.current?.send({
+                v: 1,
+                type: "tool_result",
+                callId: msg.id,
+                ok,
+                result,
+              });
+            })();
+          }
+        },
       },
-    }, role);
+      role,
+    );
     bridgeRef.current = bridge;
 
     // Created synchronously so the cleanup below can always abort it, even if
@@ -367,13 +432,16 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
       // The façade holds no profile. A fillsFrom tool still registers there;
       // the DO suspends it and the console supplies the fields.
       resolveFields: isConsole ? (paths) => profileStore.resolve(paths) : undefined,
-      bless: isConsole ? askBless : undefined,
+      approve: isConsole ? askApproval : undefined,
     });
     registrationRef.current = registration;
     void syncTools(
       registration,
       new Set(seededFromNav ? [seededFromNav] : []),
-    );
+    ).then(async () => {
+      initialSyncDone = true;
+      void maybeDispatchInitialPrompt();
+    });
     bridge.send({ v: 1, type: "screencast", on: true });
 
     const onVisibility = () => {
@@ -518,6 +586,43 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
     }
   };
 
+  const suggestions = (() => {
+    const list: string[] = [];
+    const origin = pageOrigin || seededFromNav || "";
+    if (origin.includes("allbirds")) {
+      list.push(
+        "Find black running shoes under $120",
+        "Compare prices for Wool Runners vs Tree Dashers",
+        "Add men's wool runner to cart",
+      );
+    } else if (origin.includes("brooklinen")) {
+      list.push(
+        "Find best-selling queen sheet sets",
+        "Compare lightweight vs warm duvets",
+        "Find any active discount codes",
+      );
+    } else if (origin.includes("kayak")) {
+      list.push(
+        "Find flights from NYC to London under $500",
+        "Compare flight options for next weekend",
+        "Find 4-star hotels in Paris with breakfast",
+      );
+    } else if (origin.includes("gov.uk")) {
+      list.push(
+        "Find my local council from postcode",
+        "Check vehicle tax rates",
+        "Fill council form with my profile details",
+      );
+    } else {
+      list.push(
+        "Compare prices for best sellers",
+        "Find available discounts and sales",
+        "Check reviews and stock availability",
+      );
+    }
+    return list;
+  })();
+
   return (
     <div className="shell">
       <div className="shell__top">
@@ -541,6 +646,24 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             }
           }}
         />
+        <div className="shell__view-toggle" role="group" aria-label="View mode">
+          <button
+            type="button"
+            className="shell__view-btn"
+            data-active={viewMode === "normal"}
+            onClick={() => setViewMode("normal")}
+          >
+            Normal view
+          </button>
+          <button
+            type="button"
+            className="shell__view-btn"
+            data-active={viewMode === "tech"}
+            onClick={() => setViewMode("tech")}
+          >
+            Tech view
+          </button>
+        </div>
         <ThemeToggle />
       </div>
       <ChatPanel
@@ -548,6 +671,8 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
         audit={audit}
         lines={lines}
         busy={busy}
+        mode={viewMode}
+        suggestions={suggestions}
         onSend={(text) => {
           setBusy(true);
           setLines((l) => [...l, { kind: "user", text }]);
@@ -568,70 +693,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
         }}
       />
       <div className="shell__right">
-        <Consent
-          origins={ORIGINS}
-          consented={consented}
-          onGrant={(o) => void grant(o)}
-          onRevoke={(o) => void revoke(o)}
-          autonomous={autonomous}
-          onAutonomous={(on) => {
-            setAutonomous(on);
-            bridgeRef.current?.send({ v: 1, type: "autonomous", on });
-            setLines((l) => [
-              ...l,
-              {
-                kind: "system",
-                text: on
-                  ? "autonomous on — demo origins granted; new sites grant on open"
-                  : "autonomous off — new sites need a grant",
-              },
-            ]);
-          }}
-        />
-        {isConsole ? (
-          <PasskeyBar
-            sessionToken={sessionToken}
-            onSignedIn={(id) => {
-              // Adopting a different account means different grants. Re-claim
-              // this session under it and take what comes back.
-              void (async () => {
-                const res = await fetch(`/s/${sessionToken}/account`, {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ accountId: id }),
-                });
-                if (!res.ok) return;
-                const body = (await res.json()) as { consent?: unknown };
-                if (!Array.isArray(body.consent)) return;
-                const next = new Set(
-                  body.consent.filter((x): x is string => typeof x === "string"),
-                );
-                setConsented(next);
-                const reg = registrationRef.current;
-                if (reg) await syncTools(reg, next, observedRef.current);
-              })();
-            }}
-          />
-        ) : null}
-        <Surface
-          origin={pageOrigin}
-          remoteTools={remoteTools}
-          registered={tools}
-          onOffer={(name) => void runOffer(name)}
-          mapSiteBusy={mapSiteBusy}
-          onMapSite={
-            pageOrigin
-              ? () => {
-                  setMapSiteBusy(true);
-                  bridgeRef.current?.send({
-                    v: 1,
-                    type: "generate_manifest",
-                    origin: pageOrigin,
-                  });
-                }
-              : undefined
-          }
-        />
+        {/* Browser render is ALWAYS at the top of the right panel */}
         <Viewport
           jpeg={jpeg}
           driving={driving}
@@ -661,13 +723,80 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             });
           }}
         />
+        {/* Tech details rendered below browser when in Tech view */}
+        {viewMode === "tech" && (
+          <div className="shell__tech-details">
+            <Consent
+              origins={ORIGINS}
+              consented={consented}
+              onGrant={(o) => void grant(o)}
+              onRevoke={(o) => void revoke(o)}
+              autonomous={autonomous}
+              onAutonomous={(on) => {
+                setAutonomous(on);
+                bridgeRef.current?.send({ v: 1, type: "autonomous", on });
+                setLines((l) => [
+                  ...l,
+                  {
+                    kind: "system",
+                    text: on
+                      ? "Auto-browsing enabled: AI can freely explore web stores and compare options without asking for permission on each site."
+                      : "Auto-browsing paused: AI will ask before opening new websites.",
+                  },
+                ]);
+              }}
+            />
+            {isConsole ? (
+              <PasskeyBar
+                sessionToken={sessionToken}
+                onSignedIn={(id) => {
+                  void (async () => {
+                    const res = await fetch(`/s/${sessionToken}/account`, {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ accountId: id }),
+                    });
+                    if (!res.ok) return;
+                    const body = (await res.json()) as { consent?: unknown };
+                    if (!Array.isArray(body.consent)) return;
+                    const next = new Set(
+                      body.consent.filter((x): x is string => typeof x === "string"),
+                    );
+                    setConsented(next);
+                    const reg = registrationRef.current;
+                    if (reg) await syncTools(reg, next, observedRef.current);
+                  })();
+                }}
+              />
+            ) : null}
+            <Surface
+              origin={pageOrigin}
+              remoteTools={remoteTools}
+              registered={tools}
+              onOffer={(name) => void runOffer(name)}
+              mapSiteBusy={mapSiteBusy}
+              onMapSite={
+                pageOrigin
+                  ? () => {
+                      setMapSiteBusy(true);
+                      bridgeRef.current?.send({
+                        v: 1,
+                        type: "generate_manifest",
+                        origin: pageOrigin,
+                      });
+                    }
+                  : undefined
+              }
+            />
+          </div>
+        )}
       </div>
-      <BlessGate
-        request={bless}
+      <ApprovalDialog
+        request={approval}
         onDecide={(ok) => {
-          blessWait.current?.(ok);
-          blessWait.current = null;
-          setBless(null);
+          approvalWait.current?.(ok);
+          approvalWait.current = null;
+          setApproval(null);
         }}
       />
       <ManifestReview

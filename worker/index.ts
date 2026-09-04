@@ -7,6 +7,8 @@ import { FACADE_HEADERS } from "./facade-headers";
 import { isPrivateUrl } from "./is-private-url";
 import { makeResolve4 } from "./doh-resolve4";
 import { isAccountId } from "./account";
+import { canonicalOrigin } from "../shared/origin";
+import { MANIFESTS } from "./manifests";
 
 export { SessionDO, OAuthClientDO, OAuthCodeDO, AccountDO, SiteDO };
 
@@ -266,6 +268,20 @@ async function parseAndValidateOrigin(
   if (parsed.protocol !== "https:") {
     return json({ error: "invalid origin" }, 400);
   }
+  // Resolve against the demo catalog first. "allbirds.com" and
+  // "www.allbirds.com" are different origins and consent keys on that
+  // difference — but a person typing the bare host means the store, and
+  // granting the bare host opened a session that navigated to the storefront
+  // (which redirects to www) while consenting to something else, so no
+  // manifest matched and no tools registered. Exact host match only; anything
+  // outside the catalog normalises unchanged.
+  const known = canonicalOrigin(parsed.href, MANIFESTS.map((m) => m.origin));
+  if (known) {
+    const blockedKnown = await isPrivateUrl(known, makeResolve4());
+    if (blockedKnown) return json({ error: "invalid origin" }, 400);
+    return known;
+  }
+
   // Normalize to canonical origin (scheme + host + port) so the seeded
   // consent matches what /s/<token>/consent expects and what subsequent
   // tool calls (e.g. navigate_to) will check against. Drops path/query.

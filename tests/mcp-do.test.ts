@@ -9,7 +9,9 @@ describe("SessionDO.listTools contract (mocked via buildToolList)", () => {
     const list = await buildToolList(new Set());
     expect(list.map((t) => t.name).sort()).toEqual([
       "check_approval",
+      "get_page_errors",
       "get_page_state",
+      "inspect_site",
       "list_available_origins",
       "navigate_to",
     ]);

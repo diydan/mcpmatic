@@ -39,7 +39,10 @@ import {
   blessTool,
   declineTool,
 } from "./manifest-registry";
-import { mergeAutonomousConsent } from "../shared/autonomous";
+import {
+  autonomousFromStored,
+  mergeAutonomousConsent,
+} from "../shared/autonomous";
 import { buildToolList } from "./mcp/tools";
 import {
   callNativeTool,
@@ -50,6 +53,17 @@ import {
 } from "./native-webmcp";
 import type { DiscoveredTool } from "../shared/protocol";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
+import {
+  describeInspection,
+  inspectPage,
+  type InspectFn,
+} from "./inspect-site";
+import {
+  PageErrorLog,
+  attachPageErrorCapture,
+  describePageErrors,
+  type PageEventSource,
+} from "./page-errors";
 import {
   ApprovalGate,
   approvalFailureText,
@@ -109,6 +123,7 @@ type LiveBrowser = {
     };
     setViewportSize?: (size: { width: number; height: number }) => Promise<void>;
     addInitScript?: (script: string | { content: string }) => Promise<void>;
+    on?: PageEventSource["on"];
   };
   cdp: CdpSession | null;
 };
@@ -138,6 +153,17 @@ export class SessionDO extends DurableObject<Env> {
    * duplicate generation from a burst of misses or repeated manual clicks.
    */
   private generatingOrigins = new Set<string>();
+  /**
+   * What the open page reported went wrong. Memory-only and per session by
+   * design — see page-errors.ts on why this is not the audit table.
+   */
+  private pageErrors = new PageErrorLog();
+  /**
+   * Whether the live browser's page accepted the error subscriptions. False
+   * means an empty buffer proves nothing, so get_page_errors must not report
+   * a clean page.
+   */
+  private pageErrorsAttached = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -448,8 +474,20 @@ export class SessionDO extends DurableObject<Env> {
    * for granted origins.
    */
   async listTools(): Promise<ToolSchema[]> {
-    const consented = new Set(this.readConsent());
+    // Autonomous grants an origin at call time, which made the catalog
+    // callable but not discoverable: an MCP client listed five spine tools,
+    // never learned the merchant tools existed, and so never called them. The
+    // listing has to agree with what a call would allow, and the façade
+    // already merges the same way client-side.
+    const consented = new Set(this.listingOrigins());
     return (await buildToolList(consented, this.env.MANIFEST_REGISTRY)) as unknown as ToolSchema[];
+  }
+
+  /** Origins a tool may be listed for: granted, plus the catalog when autonomous. */
+  private listingOrigins(): string[] {
+    const granted = this.readConsent();
+    if (!this.readAutonomous()) return granted;
+    return mergeAutonomousConsent(granted, MANIFESTS.map((m) => m.origin));
   }
 
   /**
@@ -467,7 +505,7 @@ export class SessionDO extends DurableObject<Env> {
     // The MCP entry, and only this one, strips caller-supplied profile paths.
     // Otherwise a client could pass {"address.line1": "…"} and route around
     // the approval — and the audit row would name a field that was never the
-    // user's profile. The façade path merges *after* its own bless, so it is
+    // user's profile. The façade path merges *after* its own approve, so it is
     // deliberately left alone.
     const safeArgs = stripProfilePaths(manifest?.fillsFrom, args);
     let result: { ok: boolean; text: string; resolved?: string[] };
@@ -740,7 +778,7 @@ export class SessionDO extends DurableObject<Env> {
 
   /**
    * One in-page agent turn is finished. The page sends this on every exit path,
-   * including bless denied and executeTool throwing, so a turn cannot strand
+   * including approval denied and executeTool throwing, so a turn cannot strand
    * with the chat box disabled.
    */
   private async onToolResult(
@@ -813,6 +851,51 @@ export class SessionDO extends DurableObject<Env> {
       this.setCurrentOrigin(originFromUrl(url));
       return { ok: true, text: `URL: ${url}\nTitle: ${title}\n\n${body}` };
     }
+    if (name === "get_page_errors") {
+      // Reports on the browser; never starts one, same rule as get_page_state.
+      const entries = this.pageErrors.all();
+      // An empty buffer means three different things, and reporting a clean
+      // page for any of the other two tells the operator the opposite of the
+      // truth — the failure mode this tool exists to close.
+      if (entries.length === 0) {
+        if (!this.live) {
+          return {
+            ok: true,
+            text: this.env.BROWSER
+              ? "No remote browser yet, so nothing has been recorded."
+              : "No Browser Rendering binding in this environment, so no page errors are captured.",
+          };
+        }
+        if (!this.pageErrorsAttached) {
+          return {
+            ok: true,
+            text: "This browser does not report page events, so no errors are being captured. An empty result here is not a clean page.",
+          };
+        }
+      }
+      return { ok: true, text: describePageErrors(entries) };
+    }
+    if (name === "inspect_site") {
+      // Same rule as list_remote_tools: reports on the page that is open and
+      // never starts a browser. Read-only, so it needs no consent beyond the
+      // grant that opened the page.
+      const live = this.live;
+      if (!live?.page.evaluate) {
+        return {
+          ok: true,
+          text: "No remote page open yet. Call navigate_to with a granted origin first.",
+        };
+      }
+      const found = await discoverNativeTools(
+        live.page.evaluate.bind(live.page) as DiscoverFn,
+      );
+      const page = await inspectPage(
+        live.page.evaluate.bind(live.page) as unknown as InspectFn,
+        found.ok ? (found.tools ?? []) : [],
+      );
+      return { ok: true, text: describeInspection(page) };
+    }
+
     if (name === "list_remote_tools") {
       // Reports on the page that is open; never starts a browser, same rule as
       // get_page_state.
@@ -1173,6 +1256,15 @@ export class SessionDO extends DurableObject<Env> {
       } catch {
         /* older binding without addInitScript; native path will report why */
       }
+      // Subscribe before the first navigation, or the errors of the page that
+      // navigation loads are missed. A binding without page.on captures
+      // nothing and says so through get_page_errors rather than failing here.
+      // Clear first: this browser must not inherit a torn-down one's errors.
+      this.pageErrors.clear();
+      this.pageErrorsAttached = attachPageErrorCapture(
+        page as PageEventSource,
+        this.pageErrors,
+      );
       let cdp: CdpSession | null = null;
       try {
         cdp = wrapCdp(await page.context().newCDPSession(page));
@@ -1266,7 +1358,8 @@ export class SessionDO extends DurableObject<Env> {
         `SELECT value FROM meta WHERE key = 'autonomous' LIMIT 1`,
       )
       .toArray()[0];
-    return row?.value === "1";
+    // Absent means on. See autonomousFromStored.
+    return autonomousFromStored(row?.value);
   }
 
   private async allowOrigin(origin: string): Promise<boolean> {

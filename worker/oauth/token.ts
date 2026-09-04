@@ -14,7 +14,7 @@
  *    looked up under `refresh:<rt>`; clientId must match; on success, a new
  *    access + refresh pair is written, and the *old* refresh key is deleted.
  *
- * Client authentication in this Phase 1.5 handler is via form params
+ * Client authentication in this handler is via form params
  * (`client_id` + `client_secret`). Confidential clients per RFC 6749 §2.3.1.
  *
  * Security headers — `FACADE_HEADERS` + `Cache-Control: no-store` — are
@@ -36,6 +36,7 @@
 import { FACADE_HEADERS } from "../facade-headers";
 import { base64urlNoPad } from "./encoding";
 import { verifyPkce } from "./pkce";
+import { hashClientSecret, timingSafeEqualHex } from "./secret";
 import type { AccessToken, AuthCode, OAuthClient } from "./types";
 
 /** Stub origin for the OAuth DO fetch — the DOs ignore the URL. */
@@ -47,7 +48,7 @@ const NO_STORE = { "Cache-Control": "no-store" };
 const ACCESS_TOKEN_TTL_SECONDS = 3600;
 /** RFC 6749 §4.2.2: 30 days in seconds. */
 const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30;
-/** Hard-coded scope for Phase 1.5 MCP tools. */
+/** Hard-coded scope for MCP tools. */
 const SCOPE = "mcp:tools";
 
 export async function handleToken(request: Request, env: Env): Promise<Response> {
@@ -86,15 +87,13 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 
 /**
  * Look up the client by id and verify the secret. Returns the client JSON on
- * success, null on any failure (unknown id or wrong secret).
+ * success, null on any failure (unknown id, wrong secret, or missing hash
+ * fields on the stored record).
  *
- * Note: `client.clientSecret !== clientSecret` is a plain string compare
- * (Phase 1.5 scope). A timing-safe compare would be better — a network
- * attacker with many attempts could otherwise observe the secret match
- * boundary — but the auth surface for token minting is small (the client
- * already authenticated once at /oauth/register and this is the only point
- * where its secret is checked again), so the impact is bounded. Flagged
- * for a future hardening pass.
+ * The stored record carries a salted SHA-256 hash of the plaintext secret;
+ * we recompute the digest of the presented plaintext with the stored salt
+ * and compare digests in constant time. Plaintext is never compared and
+ * never persisted on the server. See `worker/oauth/secret.ts`.
  */
 async function authenticateClient(
   clientId: string,
@@ -106,7 +105,10 @@ async function authenticateClient(
   const clientRes = await clientStub.fetch(`${DO_STUB_ORIGIN}/get`);
   if (clientRes.status !== 200) return null;
   const client = (await clientRes.json()) as OAuthClient;
-  if (client.clientSecret !== clientSecret) return null;
+  if (typeof client.clientSecretHash !== "string") return null;
+  if (typeof client.clientSecretSalt !== "string") return null;
+  const candidate = await hashClientSecret(clientSecret, client.clientSecretSalt);
+  if (!timingSafeEqualHex(candidate, client.clientSecretHash)) return null;
   return client;
 }
 

@@ -83,8 +83,8 @@ function isToolManifest(value: unknown): value is ToolManifest {
 
 /**
  * O(1) lookup by tool name, for `manifestFor`. Written alongside the
- * per-origin entry whenever a tool is blessed (Phase 2) — this phase only
- * reads it, and nothing writes it yet, so it always misses today.
+ * per-origin entry whenever a tool is blessed — this code path only reads
+ * it today, and nothing writes it yet, so it always misses.
  */
 export async function getBlessedManifestByName(
   kv: KvLike,

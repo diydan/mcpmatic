@@ -7,16 +7,19 @@ import type {
 } from "../worker/oauth/types";
 
 describe("OAuth types", () => {
-  it("OAuthClient carries id, secret, redirect URIs, name, createdAt", () => {
+  it("OAuthClient carries id, hashed secret + salt, redirect URIs, name, createdAt", () => {
     const c: OAuthClient = {
       clientId: "client-abc",
-      clientSecret: "secret-xyz",
+      clientSecretHash: "a".repeat(64),
+      clientSecretSalt: "AAAAAAAAAAAAAAAAAAAAAA",
       redirectUris: ["https://example.com/callback"],
       clientName: "test client",
       createdAt: 1700000000000,
     };
     expect(c.redirectUris).toHaveLength(1);
     expect(c.createdAt).toBeGreaterThan(0);
+    expect(c.clientSecretHash).toHaveLength(64);
+    expect(c.clientSecretSalt).toMatch(/^[A-Za-z0-9_\-]{22}$/);
   });
 
   it("AuthCode binds PKCE challenge + method + expiry + used flag", () => {

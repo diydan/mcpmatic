@@ -22,16 +22,15 @@ export function Surface({
   const host = origin ? origin.replace(/^https:\/\//, "") : null;
 
   return (
-    <section className="surface" aria-label="On this page">
-      <h2>on this page</h2>
+    <section className="surface" aria-label="Available page actions">
+      <h2>Actions on this page</h2>
       <p>
-        You browse. ChatGPT can call the tools this origin registered — they
-        show up as chips, origin-qualified.
+        Actions the AI can perform directly on this website.
       </p>
       {host ? (
         <p className="muted">{host}</p>
       ) : (
-        <p className="muted">Grant an origin to open a page.</p>
+        <p className="muted">Select or open a website to view available actions.</p>
       )}
       {remoteTools.length > 0 ? (
         <ul className="surface__tools">
@@ -45,7 +44,7 @@ export function Surface({
       ) : host ? (
         <div className="surface__no-tools">
           <p className="muted">
-            No WebMCP tools on this page. Synthesised tools may still apply.
+            Standard browser automation available for this page.
           </p>
           {onMapSite ? (
             <button type="button" disabled={!!mapSiteBusy} onClick={onMapSite}>

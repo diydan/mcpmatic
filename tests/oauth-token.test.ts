@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { handleToken } from "../worker/oauth/token";
+import { hashClientSecret } from "../worker/oauth/secret";
 import type { AccessToken, AuthCode, OAuthClient } from "../worker/oauth/types";
 
 /**
@@ -14,7 +15,16 @@ import type { AccessToken, AuthCode, OAuthClient } from "../worker/oauth/types";
  *
  * Tests build an env shim with a `Map`-backed KV, vitest mocks for the DO
  * fetches, and `vi.mock("../worker/oauth/pkce")` for the verifier.
+ *
+ * The DO now stores `clientSecretHash` + `clientSecretSalt` (NOT plaintext);
+ * see worker/oauth/secret.ts. The shared CLIENT/OTHER_CLIENT fixtures use a
+ * deterministic salt so the test can recompute the hash for the right
+ * plaintext and present it as `client_secret`.
  */
+
+const FIXED_SALT = "test-salt-fixed-value-22"; // 22 chars, matches shape
+const CLIENT_PLAINTEXT = "secret-xyz";
+const OTHER_CLIENT_PLAINTEXT = "other-secret";
 
 type FetchMock = ReturnType<typeof vi.fn>;
 
@@ -32,21 +42,24 @@ interface EnvShim {
   };
 }
 
-const CLIENT: OAuthClient = {
-  clientId: "client-abc",
-  clientSecret: "secret-xyz",
-  redirectUris: ["https://example.com/cb"],
-  clientName: "test client",
-  createdAt: 1700000000000,
-};
+async function clientFixture(
+  clientId: string,
+  plaintext: string,
+  overrides: Partial<OAuthClient> = {},
+): Promise<OAuthClient> {
+  return {
+    clientId,
+    clientSecretHash: await hashClientSecret(plaintext, FIXED_SALT),
+    clientSecretSalt: FIXED_SALT,
+    redirectUris: ["https://example.com/cb"],
+    clientName: "test client",
+    createdAt: 1700000000000,
+    ...overrides,
+  };
+}
 
-const OTHER_CLIENT: OAuthClient = {
-  clientId: "other-client",
-  clientSecret: "other-secret",
-  redirectUris: ["https://other.example/cb"],
-  clientName: "other client",
-  createdAt: 1700000000000,
-};
+let CLIENT: OAuthClient;
+let OTHER_CLIENT: OAuthClient;
 
 const REDIRECT_URI = "https://example.com/cb";
 // RFC 7636 §4.6 KAT — matches the verifier used for tests.
@@ -168,6 +181,14 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
   let pkceMock: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
+    // Build the CLIENT fixtures with hashed secrets before each test so the
+    // /token handler's hash compare has the right digests to verify against.
+    CLIENT = await clientFixture("client-abc", CLIENT_PLAINTEXT);
+    OTHER_CLIENT = await clientFixture(
+      "other-client",
+      OTHER_CLIENT_PLAINTEXT,
+      { redirectUris: ["https://other.example/cb"], clientName: "other client" },
+    );
     shim = makeEnv();
     // Default: PKCE verifier matches the challenge. The PKCE module is the
     // real implementation; individual tests can override per-case.
@@ -199,7 +220,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -311,7 +332,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         redirect_uri: REDIRECT_URI,
         code_verifier: "totally-wrong-verifier-that-is-the-right-shape-aaaaaaaaaa",
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -338,7 +359,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -361,7 +382,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         redirect_uri: "https://attacker.example/cb",
         code_verifier: CODE_VERIFIER,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -379,7 +400,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: AUTH_CODE_STRING,
         redirect_uri: REDIRECT_URI,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -402,7 +423,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: AUTH_CODE_STRING,
         code_verifier: CODE_VERIFIER,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -421,7 +442,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -440,7 +461,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         username: "alice",
         password: "hunter2",
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -477,7 +498,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -509,7 +530,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         grant_type: "refresh_token",
         refresh_token: oldRt,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -560,7 +581,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         grant_type: "refresh_token",
         refresh_token: "never-issued-token",
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -581,7 +602,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         grant_type: "refresh_token",
         refresh_token: rt,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -610,7 +631,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         grant_type: "refresh_token",
         refresh_token: rt,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -630,7 +651,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
       tokenReq({
         grant_type: "refresh_token",
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -656,7 +677,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -670,7 +691,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
       tokenReq({
         grant_type: "password",
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );
@@ -715,7 +736,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
         client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_secret: CLIENT_PLAINTEXT,
       }),
       shim.env,
     );

@@ -57,7 +57,7 @@ export type ClientMessage =
    * Completion of one in-page agent turn. `callId` is the OpenAI tool-call id the
    * DO broadcast in `tool_call` — not the `tool_exec` correlation UUID. The page
    * sends exactly one of these per `tool_call` it receives, on every exit path
-   * (success, bless denied, tool not registered, timeout, throw), so an agent
+   * (success, approval denied, tool not registered, timeout, throw), so an agent
    * turn can never strand.
    */
   | {

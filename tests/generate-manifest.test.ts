@@ -3,8 +3,17 @@ import { generateManifest } from "../worker/generate-manifest";
 import type { PageElement } from "../worker/dom-capture";
 
 /** Verbatim shape returned by env.AI.run through AI Gateway — same fixture pattern as tests/agent.test.ts. */
+/**
+ * A Responses-API reply, which is what the default model (openai/gpt-5.6-luna)
+ * routes to — `isResponsesModel` picks `decideResponses`, so a `choices`
+ * fixture decodes to "The model returned no output." and every parse fails.
+ */
 function completionWith(content: string) {
-  return { choices: [{ message: { content } }] };
+  return {
+    output: [
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: content }] },
+    ],
+  };
 }
 
 const ELEMENTS: PageElement[] = [

@@ -4,7 +4,7 @@ import { MANIFESTS } from "../manifests";
 import { getRegistryEntry, blessedManifests, type KvLike } from "../manifest-registry";
 
 /**
- * The three always-on tools. Same names the WebMCP façade registers, so an
+ * The always-on tools. Same names the WebMCP façade registers, so an
  * agent that learned them from one surface sees the same names on the other.
  */
 const SPINE: McpToolDescriptor[] = [
@@ -31,6 +31,18 @@ const SPINE: McpToolDescriptor[] = [
       required: ["origin"],
       additionalProperties: false,
     },
+  },
+  {
+    name: "get_page_errors",
+    description:
+      "Errors the open page itself reported this session: uncaught exceptions, console errors and warnings, failed requests, and 4xx/5xx responses. A replayed step that quietly did nothing usually left a trace here.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "inspect_site",
+    description:
+      "What the open page exposes: its own WebMCP tools if it publishes any, otherwise the forms, search actions and controls a tool could be built from. Read-only; never clicks or fills.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "check_approval",

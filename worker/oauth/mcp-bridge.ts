@@ -2,20 +2,22 @@
  * MCP auth bridge — translate a Bearer token presented at /mcp into the
  * underlying session token that the SessionDO understands.
  *
- * Phase 1: the bearer IS the session token (64 hex chars).
- * Phase 1.5: a registered OAuth client can exchange an authorization code
- * for an access token (43-char base64url, RFC 6749 §4.2.2 / RFC 7515
- * "compact JWS-like" shape), and that access token — when presented to
- * /mcp — must resolve to the same session token the user originally
- * consented with. Constraint #10 says bearer-token auth stays; this module
- * is the bridge that keeps /mcp backwards-compatible while also accepting
- * the new shape.
+ * The bearer at /mcp is one of two shapes, both accepted:
+ *
+ *   - A 64-hex session token, pasted directly into the MCP server config
+ *     by ChatGPT or Claude. The bearer IS the session.
+ *   - A 43-char base64url access token minted at /oauth/token (RFC 6749
+ *     §4.2.2 / RFC 7515 "compact JWS-like" shape). The access token —
+ *     when presented to /mcp — must resolve to the same session token
+ *     the user originally consented with. Constraint #10 says bearer-token
+ *     auth stays; this module is the bridge that keeps /mcp
+ *     backwards-compatible while also accepting the new shape.
  *
  * Disambiguation order (intentional, see ledger post-Task 7):
  *
- *   1. 64 hex chars (case-insensitive) — Phase 1 session token, pass
- *      through. We never reach for KV in this branch: the session token
- *      IS the bearer.
+ *   1. 64 hex chars (case-insensitive) — session token, pass through.
+ *      We never reach for KV in this branch: the session token IS the
+ *      bearer.
  *   2. 43 base64url chars — plausibly an OAuth access token minted at
  *      /oauth/token. We do NOT validate the token shape more strictly
  *      than the regex — KV lookup is the truth. If KV returns null,
@@ -35,12 +37,12 @@ import type { AccessToken } from "./types";
 
 /** RFC 6749 §4.2.2: 256-bit random access tokens encoded as 43-char base64url (no padding). */
 const OAUTH_TOKEN_RE = /^[A-Za-z0-9\-_]{43}$/;
-/** Phase 1 session tokens are 64 hex chars. Case-insensitive — input is opaque. */
+/** Session tokens are 64 hex chars. Case-insensitive — input is opaque. */
 const SESSION_TOKEN_RE = /^[a-f0-9]{64}$/i;
 
 export async function resolveMcpToken(token: string, env: Env): Promise<string | null> {
-  // Branch 1 — Phase 1 session token. No I/O. The session token is the
-  // bearer; SessionDO.getByName(token) is what /mcp will hand it to next.
+  // Branch 1 — session-token pass-through. No I/O. The session token is
+  // the bearer; SessionDO.getByName(token) is what /mcp will hand it to next.
   if (SESSION_TOKEN_RE.test(token)) return token;
 
   // Branch 2 — OAuth access token shape. KV is the source of truth.

@@ -1,5 +1,5 @@
 /**
- * Subset of the MCP wire types we use in Phase 1.
+ * Subset of the MCP wire types we use.
  * The protocol spec is JSON-RPC 2.0; this file only types what we accept or emit.
  */
 

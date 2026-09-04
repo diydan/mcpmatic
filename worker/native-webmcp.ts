@@ -113,8 +113,8 @@ async function nativeCall(payload: {
   return {
     used: true,
     text: typeof result === "string" ? result : JSON.stringify(result),
-    polyfilled: !!(globalThis as { __mcpmaticPolyfilledWebMCP?: boolean })
-      .__mcpmaticPolyfilledWebMCP,
+    polyfilled: !!(globalThis as { __browsermaticPolyfilledWebMCP?: boolean })
+      .__browsermaticPolyfilledWebMCP,
   };
 }
 
@@ -262,8 +262,8 @@ async function nativeList(): Promise<DiscoveryOutcome> {
   // into the remote page. Sanitise on the worker after evaluate returns.
   return {
     ok: true,
-    polyfilled: !!(globalThis as { __mcpmaticPolyfilledWebMCP?: boolean })
-      .__mcpmaticPolyfilledWebMCP,
+    polyfilled: !!(globalThis as { __browsermaticPolyfilledWebMCP?: boolean })
+      .__browsermaticPolyfilledWebMCP,
     tools: raw.map((t) => ({
       name: String(t.name ?? ""),
       description: String(t.description ?? ""),

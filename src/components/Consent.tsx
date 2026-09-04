@@ -26,11 +26,10 @@ export function Consent({
   const extra = [...consented].filter((o) => !known.has(o));
 
   return (
-    <section className="consent" aria-label="Origin consent">
-      <h2>grant an origin</h2>
+    <section className="consent" aria-label="Connected websites">
+      <h2>Connected websites</h2>
       <p>
-        ChatGPT is granted this page. Tools for another origin stay unregistered
-        until you say so. Shopify stores keep their own WebMCP; we only proxy it.
+        Websites you allow AI to search and browse. You are always in control of which sites AI accesses.
       </p>
       <button
         type="button"
@@ -39,12 +38,12 @@ export function Consent({
         aria-checked={autonomous}
         onClick={() => onAutonomous(!autonomous)}
       >
-        Autonomous
+        Auto-browse any site
       </button>
       <p className="consent__note">
         {autonomous
-          ? "On: every demo origin is granted, and any site you or ChatGPT open is granted. Bless still asks before profile fields leave."
-          : "Off: grant each origin yourself. Turn on to let ChatGPT move without a grant click."}
+          ? "On: AI can freely explore across sites to compare options and find deals. Private personal details still require your approval."
+          : "Off: AI only opens sites you have explicitly enabled below."}
       </p>
       <ul>
         {origins.map((o) => {
@@ -60,11 +59,11 @@ export function Consent({
                 disabled={granted}
                 onClick={() => onGrant(o.origin)}
               >
-                {granted ? "granted" : "grant"}
+                {granted ? "Enabled" : "Enable"}
               </button>
               {granted && (
                 <button type="button" onClick={() => onRevoke(o.origin)}>
-                  revoke
+                  Remove
                 </button>
               )}
             </li>
@@ -72,10 +71,10 @@ export function Consent({
         })}
         {extra.map((o) => (
           <li key={o}>
-            <span className="badge">Yours</span>
+            <span className="badge">Custom</span>
             <span>{o.replace(/^https:\/\//, "")}</span>
             <button type="button" onClick={() => onRevoke(o)}>
-              granted — revoke
+              Remove
             </button>
           </li>
         ))}
@@ -86,11 +85,11 @@ export function Consent({
           e.preventDefault();
           const origin = normaliseOrigin(draft);
           if (!origin) {
-            setError("Needs an https site, like allbirds.com");
+            setError("Please enter a website, e.g. example.com");
             return;
           }
           if (consented.has(origin)) {
-            setError(`${origin.replace(/^https:\/\//, "")} is already granted`);
+            setError(`${origin.replace(/^https:\/\//, "")} is already enabled`);
             return;
           }
           setError(null);
@@ -99,19 +98,19 @@ export function Consent({
         }}
       >
         <label className="sr-only" htmlFor="consent-origin">
-          Any other site
+          Add any other website
         </label>
         <input
           id="consent-origin"
           value={draft}
-          placeholder="or any site — example.com"
+          placeholder="Add any website (e.g. example.com)"
           onChange={(e) => {
             setDraft(e.target.value);
             if (error) setError(null);
           }}
         />
         <button type="submit" disabled={!draft.trim()}>
-          grant
+          Add
         </button>
       </form>
       <p className="consent__note">

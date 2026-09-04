@@ -1,7 +1,8 @@
 import type { ClientMessage } from "../../shared/protocol";
-import type { BlessRequest } from "./register-all";
+import type { ApprovalRequest } from "./register-all";
 
-type ApprovalRequest = {
+/** The server's approval_request, as it arrives on the bridge. */
+type IncomingApproval = {
   id: string;
   origin: string;
   tool: string;
@@ -11,7 +12,7 @@ type ApprovalRequest = {
 };
 
 type Deps = {
-  bless: (req: BlessRequest) => Promise<boolean>;
+  approve: (req: ApprovalRequest) => Promise<boolean>;
   resolveFields: (paths: readonly string[]) => Record<string, string>;
   /** Close a dialog the server has stopped waiting on. */
   dismiss?: () => void;
@@ -28,7 +29,7 @@ type Deps = {
  * the other end, and the gate's 45-second timeout is a backstop, not a plan.
  */
 export async function answerApproval(
-  req: ApprovalRequest,
+  req: IncomingApproval,
   deps: Deps,
 ): Promise<Extract<ClientMessage, { type: "approval_result" }>> {
   const deny = {
@@ -46,8 +47,8 @@ export async function answerApproval(
   let ok = false;
   try {
     ok = remaining === null
-      ? await deps.bless(blessRequest(req))
-      : await raceDeadline(deps.bless(blessRequest(req)), remaining, deps.dismiss);
+      ? await deps.approve(toApprovalRequest(req))
+      : await raceDeadline(deps.approve(toApprovalRequest(req)), remaining, deps.dismiss);
   } catch {
     return deny;
   }
@@ -61,7 +62,7 @@ export async function answerApproval(
   };
 }
 
-function blessRequest(req: ApprovalRequest): BlessRequest {
+function toApprovalRequest(req: IncomingApproval): ApprovalRequest {
   return {
     origin: req.origin,
     tool: req.tool,

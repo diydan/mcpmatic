@@ -121,12 +121,12 @@ describe("runTurn via the AI binding", () => {
   it("leaves an already-qualified model alone and honours a named gateway", async () => {
     const run = vi.fn(async () => GATEWAY_RESPONSE);
     await runTurn(
-      { AI: { run }, OPENAI_MODEL: "openai/gpt-5-mini", AI_GATEWAY_ID: "mcpmatic" },
+      { AI: { run }, OPENAI_MODEL: "openai/gpt-5-mini", AI_GATEWAY_ID: "browsermatic" },
       MESSAGES,
       TOOLS,
     );
     expect(run.mock.calls[0][0]).toBe("openai/gpt-5-mini");
-    expect(run.mock.calls[0][2]).toEqual({ gateway: { id: "mcpmatic" } });
+    expect(run.mock.calls[0][2]).toEqual({ gateway: { id: "browsermatic" } });
   });
 
   it("never sends an API key when the binding is used", async () => {
