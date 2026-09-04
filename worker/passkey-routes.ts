@@ -77,7 +77,7 @@ export async function handlePasskey(
       userID: utf8(accountId),
       authenticatorSelection: {
         residentKey: "required",
-        userVerification: "preferred",
+        userVerification: "required",
       },
     });
     await putChallenge(env.OAUTH_TOKENS, options.challenge, {
@@ -120,7 +120,7 @@ export async function handlePasskey(
   if (sub === "login/options") {
     const options = await generateAuthenticationOptions({
       rpID,
-      userVerification: "preferred",
+      userVerification: "required",
     });
     await putChallenge(env.OAUTH_TOKENS, options.challenge, { kind: "login" });
     return json(options);

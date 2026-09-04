@@ -79,3 +79,35 @@ describe("passkey registration is bound to a session the caller holds", () => {
     expect(accountForPasskey).not.toHaveBeenCalled();
   });
 });
+
+describe("passkey ceremonies demand user verification", () => {
+  // Without this the authenticator may complete a ceremony on possession of
+  // the session alone -- no biometric, no PIN, no touch. A stolen cookie or a
+  // same-origin XSS could then enrol an attacker's authenticator, or sign in,
+  // with nothing the account owner would see or feel.
+  it("requires UV when registering a new authenticator", async () => {
+    const { env } = makeEnv(ACCOUNT);
+    const res = await handlePasskey(
+      post("register/options", { sessionToken: TOKEN }),
+      env,
+      "register/options",
+    );
+    expect(res.status).toBe(200);
+    const options = (await res.json()) as {
+      authenticatorSelection?: { userVerification?: string };
+    };
+    expect(options.authenticatorSelection?.userVerification).toBe("required");
+  });
+
+  it("requires UV when logging in with a discoverable credential", async () => {
+    const { env } = makeEnv(ACCOUNT);
+    const res = await handlePasskey(
+      post("login/options", {}),
+      env,
+      "login/options",
+    );
+    expect(res.status).toBe(200);
+    const options = (await res.json()) as { userVerification?: string };
+    expect(options.userVerification).toBe("required");
+  });
+});
