@@ -17,10 +17,12 @@ into your assistant, origin-qualified, across as many sites as you like.
 ## Try it in a minute
 
 1. Open the live URL, type `allbirds.com`, press Go.
-2. The store's own tools appear as chips: `search_catalog_on_allbirds_com`,
-   `update_cart_on_allbirds_com`, and the rest — ten of them, all registered by
-   Allbirds' own script.
-3. Grant a second store. Both sets sit in one list; the first is untouched.
+2. The store's own tools appear as chips — `search_catalog_on_allbirds_com`,
+   `update_cart_on_allbirds_com` and the rest. Ten of them, every one
+   registered by Allbirds' own script.
+3. Every site in the catalog is callable too: automation is the default, so
+   several stores sit in one tool list at once. Toggle **Autonomous** off in
+   the console if you would rather grant each site yourself.
 4. Ask for a checkout fill. It stops and names the exact profile fields before
    any of them leave your machine.
 
@@ -46,8 +48,9 @@ a shipping address when checkout is filled.
 
 - The profile is never uploaded wholesale. Only declared paths resolve.
 - Values are never logged. The audit table has no value column.
-- A tool that draws on the profile cannot run unattended. It suspends until a
-  human approves it by name; with no console attached it returns
+- A tool that draws on the profile cannot run unattended. It waits ten seconds
+  for a human to approve it by name, then hands back an id to redeem rather
+  than holding the call open; with no console attached at all it returns
   `needs-console` rather than filling blanks and reporting success. An agent
   holding the same token cannot answer for you — the façade is never sent the
   request.
