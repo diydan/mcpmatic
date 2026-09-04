@@ -1,0 +1,23 @@
+name: Bug report
+description: Report broken behavior in BrowserMatic.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the bug clearly.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Steps to reproduce. Include URLs, tool calls, expected vs actual.
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Browser, ChatGPT model, deployment (live or local dev), anything else relevant.
