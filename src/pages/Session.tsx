@@ -26,7 +26,7 @@ import { profileStore, seedIfEmpty } from "../lib/profile-store";
 import { answerApproval } from "../lib/approval-reply";
 import { accountId } from "../lib/account-store";
 import { PasskeyBar } from "../components/PasskeyBar";
-import { unionOrigins } from "../../shared/origin";
+import { displayHosts, unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
 import { navigationHref, normaliseOrigin } from "../../shared/origin";
@@ -231,13 +231,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
         ...l,
         {
           kind: "system",
-          text: `Connected to ${seeded.map((s) => {
-            try {
-              return new URL(s).hostname.replace(/^www\./, "");
-            } catch {
-              return s;
-            }
-          }).join(", ")}`,
+          text: `Connected to ${displayHosts(seeded).join(", ")}`,
         },
       ]);
       // If this is a direct site visit (not a general task prompt), open the

@@ -27,3 +27,7 @@ SPRINT.md
 # Local agent worktrees and session state. An embedded git repo committed
 # here becomes a gitlink with no .gitmodules, which breaks a fresh clone.
 .claude/
+
+# Sibling agent worktrees. Committing one makes a gitlink with no .gitmodules,
+# which breaks a fresh clone. Same trap as .claude/.
+.worktrees/
