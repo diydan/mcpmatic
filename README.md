@@ -9,10 +9,10 @@ conversations.
 
 BrowserMatic is one session that spans origins. Type a web address and we open
 it in a browser that installs the WebMCP API **before the site's own code
-runs** — so the site registers its own tools, we add none, and we carry them
-into your assistant, origin-qualified, across as many sites as you like.
+runs**. The site registers its own tools, we add none, and we carry them into
+your assistant, origin-qualified, across as many sites as you like.
 
-**Live:** <https://browsermatic.dev> — no login, no key, no install.
+**Live:** <https://browsermatic.dev>. No login, no key, no install.
 
 ![The console: an AI assistant on the left, the remote browser it is driving on
 the right, and you able to take the keyboard at any
@@ -21,7 +21,7 @@ moment.](docs/images/console.png)
 ## Try it in a minute
 
 1. Open the live URL, type `allbirds.com`, press Go.
-2. The store's own tools appear as chips — `search_catalog_on_allbirds_com`,
+2. The store's own tools appear as chips: `search_catalog_on_allbirds_com`,
    `update_cart_on_allbirds_com` and the rest. Ten of them, every one
    registered by Allbirds' own script.
 3. Every site in the catalog is callable too: automation is the default, so
@@ -31,24 +31,24 @@ moment.](docs/images/console.png)
    any of them leave your machine.
 
 Any https origin works, not a fixed list. `inspect_site` reports what the page
-actually exposes — its own WebMCP tools if it publishes any, otherwise the
+actually exposes: its own WebMCP tools if it publishes any, otherwise the
 forms, search actions and controls it does have. On Hacker News that is
 `GET //hn.algolia.com/ (q)`; on GOV.UK, `GET /search/all (keywords)`. Turning
 those into callable tools is the next phase
 (`docs/superpowers/specs/2026-09-04-generated-tools-design.md`).
 
-In ChatGPT desktop use **GPT-5.6 Sol or Terra** — Luna has WebMCP disabled and
+In ChatGPT desktop use **GPT-5.6 Sol or Terra**. Luna has WebMCP disabled, and
 Enterprise/Edu workspaces have no site tools. Give it the `/s/<token>` URL.
 
 ## One session, two views
 
-`/c/<token>` is the **console** — what you open. It holds the profile and is
+`/c/<token>` is the **console**, the view you open. It holds the profile and is
 the only view that can approve a field leaving your machine.
 
-`/s/<token>` is the **façade** — what an agent loads. It registers the tools
+`/s/<token>` is the **façade**, the view an agent loads. It registers the tools
 and holds no profile.
 
-Both connect at once, which is the normal way to use this — and it is the
+Both connect at once, which is the normal way to use this, and it is the
 point. People and agents work the same page together: the agent calls the
 site's structured tools while you watch the live viewport, take the keyboard
 whenever you want, and approve a profile field by name mid-flight without
@@ -57,10 +57,10 @@ waiting for the other to finish.
 
 ## What is true
 
-It would be easy to say "your data never leaves your device." It would be
-false. Injected fields travel page → Worker → Durable Object → the target
-origin, and a store legitimately learns a shipping address when checkout is
-filled. What follows is what actually holds.
+"Your data never leaves your device" would be false here. Injected fields
+travel page → Worker → Durable Object → the target origin, and a store
+legitimately learns a shipping address when checkout is filled. What follows
+is what actually holds.
 
 - The profile is never uploaded wholesale. Only declared paths resolve.
 - Values are never logged. The audit table has no value column.
@@ -68,40 +68,41 @@ filled. What follows is what actually holds.
   for a human to approve it by name, then hands back an id to redeem rather
   than holding the call open; with no console attached at all it returns
   `needs-console` rather than filling blanks and reporting success. An agent
-  holding the same token cannot answer for you — the façade is never sent the
+  holding the same token cannot answer for you: the façade is never sent the
   request.
 - Keystrokes in the viewport cross this Worker in plaintext and are not stored.
 
 ## Why WebMCP
 
-An agent can already drive a website by guessing — read the DOM, find something
+An agent can already drive a website by guessing: read the DOM, find something
 that looks like a search box, click it. That works until the site changes, and
 it fails silently when it fails.
 
 WebMCP inverts it. The site *declares* what an agent may do, names the
 arguments, and runs its own handler. So `update_cart` is Shopify's code with
 Shopify's validation, not our reconstruction of it. When a store redesigns its
-checkout, a scraper breaks and a declared tool keeps working — the contract is
+checkout, a scraper breaks and a declared tool keeps working. The contract is
 the tool, not the markup.
 
 That is also why the consent model fits rather than fights: the site opted in
 by publishing, and the human opts in per origin and per profile field. Nobody
 is being worked around.
 
-The gap was never the standard. It was reach — tools are scoped to the page
+The gap was never the standard. It was reach. Tools are scoped to the page
 that registered them, and the browser API is behind an origin trial, so a site
 that fully implemented WebMCP exposes nothing in almost any browser. This
 closes both.
 
 ## Architecture
 
-Two browsers, and the difference matters. **Yours** just loads a web page —
-no extension, no flag, no download; ChatGPT's in-app browser is one of them.
+Two browsers, and the difference matters. **Yours** just loads a web page,
+with no extension, no flag and no download. ChatGPT's in-app browser is one
+of them.
 **Ours** is a second, remote Chromium that opens the target site, and it is the
 one the WebMCP API is installed into.
 
 ```
-Your browser, or ChatGPT's in-app browser — nothing installed
+Your browser, or ChatGPT's in-app browser (nothing installed)
   │  you open  /c/<token>  (console)
   │  an agent opens  /s/<token>  (façade)
   ▼
@@ -126,7 +127,7 @@ Load-bearing decisions:
 - **A capability URL, not a login.** ChatGPT will not carry a session cookie.
   High-entropy token in the path, short TTL, revocable, `Referrer-Policy:
   no-referrer`.
-- **Origin-qualified names, always** — `search_flights_on_kayak_com`, never
+- **Origin-qualified names, always.** `search_flights_on_kayak_com`, never
   `search_flights`. ChatGPT's permission model is per-site, so spanning origins
   extends it rather than routing around it.
 - **One `AbortController` per tool.** WebMCP has no `unregisterTool` and a
@@ -145,8 +146,9 @@ Load-bearing decisions:
 ## Two surfaces
 
 The façade at `/s/<token>` is what ChatGPT's in-app browser sees. The same
-Worker also speaks MCP at `/mcp` — JSON-RPC, bearer token or OAuth 2.1 with
-PKCE — verified against the official MCP SDK, so any compliant client drives
+Worker also speaks MCP at `/mcp` over JSON-RPC, with a bearer token or OAuth
+2.1 and PKCE. It is verified against the official MCP SDK, so any compliant
+client drives
 the identical session headlessly. See [docs/oauth.md](docs/oauth.md).
 
 ## Setup
@@ -172,7 +174,7 @@ Façade headers (`public/_headers`): `Origin-Agent-Cluster: ?1`,
 ## Limits
 
 - A passkey signs you in to BrowserMatic itself, on your own device. It cannot
-  log you in to a *remote site* — that authenticator is on your machine and the
+  log you in to a *remote site*: that authenticator is on your machine and the
   remote browser runs in Cloudflare's network. Demo remote logins with a
   password or OAuth.
 - Selectors in hand-written manifests are bound at authoring time and break
