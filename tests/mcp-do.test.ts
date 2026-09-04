@@ -11,6 +11,7 @@ describe("SessionDO.listTools contract (mocked via buildToolList)", () => {
       "check_approval",
       "get_page_errors",
       "get_page_state",
+      "inspect_site",
       "list_available_origins",
       "navigate_to",
     ]);

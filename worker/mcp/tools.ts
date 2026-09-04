@@ -39,6 +39,12 @@ const SPINE: McpToolDescriptor[] = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
+    name: "inspect_site",
+    description:
+      "What the open page exposes: its own WebMCP tools if it publishes any, otherwise the forms, search actions and controls a tool could be built from. Read-only; never clicks or fills.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
     name: "check_approval",
     description:
       "Collect the result of a tool call that returned approval-pending. Pass the id from that reply.",

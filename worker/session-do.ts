@@ -46,6 +46,11 @@ import {
 import type { DiscoveredTool } from "../shared/protocol";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
 import {
+  describeInspection,
+  inspectPage,
+  type InspectFn,
+} from "./inspect-site";
+import {
   PageErrorLog,
   attachPageErrorCapture,
   describePageErrors,
@@ -851,6 +856,27 @@ export class SessionDO extends DurableObject<Env> {
       }
       return { ok: true, text: describePageErrors(entries) };
     }
+    if (name === "inspect_site") {
+      // Same rule as list_remote_tools: reports on the page that is open and
+      // never starts a browser. Read-only, so it needs no consent beyond the
+      // grant that opened the page.
+      const live = this.live;
+      if (!live?.page.evaluate) {
+        return {
+          ok: true,
+          text: "No remote page open yet. Call navigate_to with a granted origin first.",
+        };
+      }
+      const found = await discoverNativeTools(
+        live.page.evaluate.bind(live.page) as DiscoverFn,
+      );
+      const page = await inspectPage(
+        live.page.evaluate.bind(live.page) as unknown as InspectFn,
+        found.ok ? (found.tools ?? []) : [],
+      );
+      return { ok: true, text: describeInspection(page) };
+    }
+
     if (name === "list_remote_tools") {
       // Reports on the page that is open; never starts a browser, same rule as
       // get_page_state.
