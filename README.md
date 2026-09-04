@@ -26,6 +26,13 @@ into your assistant, origin-qualified, across as many sites as you like.
 4. Ask for a checkout fill. It stops and names the exact profile fields before
    any of them leave your machine.
 
+Any https origin works, not a fixed list. `inspect_site` reports what the page
+actually exposes — its own WebMCP tools if it publishes any, otherwise the
+forms, search actions and controls it does have. On Hacker News that is
+`GET //hn.algolia.com/ (q)`; on GOV.UK, `GET /search/all (keywords)`. Turning
+those into callable tools is the next phase
+(`docs/superpowers/specs/2026-09-04-generated-tools-design.md`).
+
 In ChatGPT desktop use **GPT-5.6 Sol or Terra** — Luna has WebMCP disabled and
 Enterprise/Edu workspaces have no site tools. Give it the `/s/<token>` URL.
 
@@ -59,19 +66,6 @@ a shipping address when checkout is filled.
   storefront that ships WebMCP can register its own tools. **We add none of our
   own.** Without this, a WebMCP storefront exposes nothing at all.
 - Keystrokes in the viewport cross this Worker in plaintext and are not stored.
-
-## Demo origins
-
-| Origin | Kind |
-|---|---|
-| allbirds.com, brooklinen.com | Shopify native — their tools, proxied |
-| kayak.com | Synthesised — hand-written steps |
-| gov.uk | Synthesised, profile-gated — postcode only |
-
-Any https origin can be granted. `list_remote_tools` reports its real WebMCP
-surface, and observed tools register origin-qualified without a hand-authored
-manifest. Sites publishing no tools of their own are the next phase — see
-`docs/superpowers/specs/2026-09-04-generated-tools-design.md`.
 
 ## Architecture
 
