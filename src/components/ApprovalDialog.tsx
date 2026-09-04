@@ -8,7 +8,7 @@ type Props = {
 export function ApprovalDialog({ request, onDecide }: Props) {
   if (!request) return null;
   return (
-    <div className="approve" role="dialog" aria-modal="true" aria-labelledby="approval-title">
+    <div className="approval" role="dialog" aria-modal="true" aria-labelledby="approval-title">
       <div className="approval__card">
         <h2 id="approval-title">send these fields?</h2>
         <p>
