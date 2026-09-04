@@ -68,16 +68,101 @@ export type ModelEnv = {
  * Structural signals only. Sniffing tool output for the word "failed" would
  * bind model choice to error prose, which changes.
  *
- * Both default to the same id because it is the one verified to resolve
- * through this account's AI Gateway. `openai/gpt-5.6-luna` and
- * `openai/gpt-5.6-sol` both return `7003: User Input Error`: Sol, Terra and
- * Luna are ChatGPT client tiers, not API models. Point `MODEL_HARD` at a
- * larger model that does resolve and the escalation below starts working.
+ * Luna is the cost-optimised member of the gpt-5.6 family and Sol the frontier
+ * one, both with a 1,050,000 token context. They speak the Responses API, not
+ * Chat Completions; see isResponsesModel.
  */
-const DEFAULT_EASY = "openai/gpt-5.5";
-const DEFAULT_HARD = "openai/gpt-5.5";
+const DEFAULT_EASY = "openai/gpt-5.6-luna";
+const DEFAULT_HARD = "openai/gpt-5.6-sol";
 /** Chaining begins once this many tool results are already in the transcript. */
 const CHAINING_AFTER = 2;
+
+/**
+ * The gpt-5.6 family takes the Responses API, not Chat Completions.
+ *
+ * Cloudflare's model pages list "Request formats: Responses" for luna, sol and
+ * terra. Sending a Chat Completions body to them returns
+ * `7003: User Input Error`, which is accurate and easy to misread as the model
+ * not existing. They exist, and they carry a 1,050,000 token context window.
+ */
+export function isResponsesModel(model: string): boolean {
+  return /(^|\/)gpt-5\.6(-|$)/.test(model);
+}
+
+/**
+ * A Responses request.
+ *
+ * Three differences from chat that matter: the system prompt is `instructions`
+ * rather than a message, a tool declaration is flat rather than nested under
+ * `function`, and a tool result is a `function_call_output` item rather than a
+ * message with a role.
+ */
+export function responsesBody(
+  messages: readonly ChatTurn[],
+  tools: readonly ToolSchema[],
+): Record<string, unknown> {
+  const instructions = messages
+    .filter((m) => m.role === "system")
+    .map((m) => m.content ?? "")
+    .join("\n");
+  const input: Array<Record<string, unknown>> = [];
+  for (const m of messages) {
+    if (m.role === "system") continue;
+    if (m.role === "tool") {
+      input.push({
+        type: "function_call_output",
+        call_id: m.tool_call_id ?? "",
+        output: m.content ?? "",
+      });
+      continue;
+    }
+    input.push({ role: m.role, content: m.content ?? "" });
+  }
+  return {
+    instructions,
+    input,
+    max_output_tokens: 1024,
+    tools: tools.map((t) => ({
+      type: "function",
+      name: t.name,
+      description: t.description,
+      parameters: t.inputSchema,
+    })),
+  };
+}
+
+/**
+ * Read a decision out of a Responses payload.
+ *
+ * `output` is a list of items rather than a single message. A turn can both
+ * speak and call a tool; the call is what moves the session, so it wins.
+ */
+export function decideResponses(raw: unknown): AgentDecision {
+  const output = (raw as { output?: unknown })?.output;
+  const items = Array.isArray(output) ? output : [];
+
+  for (const item of items) {
+    const it = item as { type?: string; name?: string; call_id?: string; id?: string; arguments?: unknown };
+    if (it.type !== "function_call" || typeof it.name !== "string") continue;
+    let args: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(typeof it.arguments === "string" ? it.arguments : "{}");
+      if (parsed && typeof parsed === "object") args = parsed as Record<string, unknown>;
+    } catch {
+      /* a model that emits invalid JSON gets an empty object, not a crash */
+    }
+    return { kind: "tool", id: it.call_id || it.id || "", name: it.name, arguments: args };
+  }
+
+  const text = items
+    .filter((i) => (i as { type?: string }).type === "message")
+    .flatMap((i) => ((i as { content?: unknown[] }).content ?? []) as Array<{ type?: string; text?: string }>)
+    .filter((c) => c.type === "output_text" && typeof c.text === "string")
+    .map((c) => c.text as string)
+    .join("");
+
+  return { kind: "message", content: text || "The model returned no output." };
+}
 
 export function chooseModel(
   env: Pick<ModelEnv, "OPENAI_MODEL" | "MODEL_EASY" | "MODEL_HARD">,
@@ -225,12 +310,13 @@ async function callModel(
     // The binding takes `{author}/{model}`; the model goes in the first
     // argument, not the body.
     const qualified = model.includes("/") ? model : `openai/${model}`;
+    const responses = isResponsesModel(qualified);
     const raw = await env.AI.run(
       qualified,
-      requestBody("", messages, tools),
+      responses ? responsesBody(messages, tools) : requestBody("", messages, tools),
       { gateway: { id: env.AI_GATEWAY_ID || "default" } },
     );
-    return decide(raw);
+    return responses ? decideResponses(raw) : decide(raw);
   }
 
   if (!env.OPENAI_API_KEY) throw new Error(noModelMessage());
