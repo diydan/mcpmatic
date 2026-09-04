@@ -1,6 +1,8 @@
 # Auto-generated manifests — design
 
-**Status:** proposed, not yet planned or implemented.
+**Status:** superseded by `2026-09-04-generated-tools-design.md`, which
+narrows the scope and puts verification before synthesis. Kept because that
+document argues against parts of this one, and the argument needs its subject.
 
 ## Problem
 

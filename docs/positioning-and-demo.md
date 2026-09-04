@@ -1,6 +1,6 @@
 # Positioning and demo
 
-Companion to `docs/superpowers/specs/2026-09-03-session-as-account-design.md`.
+Companion to `docs/design/2026-09-03-session-as-account-design.md`.
 That document is the mechanism. This one is the claim and the seven minutes
 that prove it.
 

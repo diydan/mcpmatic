@@ -35,7 +35,7 @@ actually exposes: its own WebMCP tools if it publishes any, otherwise the
 forms, search actions and controls it does have. On Hacker News that is
 `GET //hn.algolia.com/ (q)`; on GOV.UK, `GET /search/all (keywords)`. Turning
 those into callable tools is the next phase
-(`docs/superpowers/specs/2026-09-04-generated-tools-design.md`).
+(`docs/design/2026-09-04-generated-tools-design.md`).
 
 In ChatGPT desktop use **GPT-5.6 Sol or Terra**. Luna has WebMCP disabled, and
 Enterprise/Edu workspaces have no site tools. Give it the `/s/<token>` URL.

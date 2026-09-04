@@ -31,3 +31,7 @@ SPRINT.md
 # Sibling agent worktrees. Committing one makes a gitlink with no .gitmodules,
 # which breaks a fresh clone. Same trap as .claude/.
 .worktrees/
+
+# Agent execution plans. Scaffolding for how work got done, not documentation
+# of what was built; the design records live in docs/design/.
+docs/superpowers/

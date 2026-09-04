@@ -157,6 +157,7 @@ Total: 2:45. Audio covers everything on screen. No music. No title card.
 4. The approval dialog, listing field names only.
 5. Audit row close-up.
 
-Do NOT upload the Playwright QA shots in scripts/qa-screenshots/. They were taken without Browser Rendering and say "no browser binding."
+(The old Playwright QA shots have been deleted: they were taken without a
+Browser Rendering binding and showed "no browser binding" instead of a page.)
 
 Dismiss Allbirds' "Where are we shipping to?" modal before any screenshot.
