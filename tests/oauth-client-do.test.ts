@@ -3,6 +3,13 @@ import { OAuthClientDO } from "../worker/oauth/client-do";
 import type { OAuthClient } from "../worker/oauth/types";
 
 /**
+ * The DO persists whatever JSON the registration handler hands it; the
+ * at-rest shape is now `{ clientSecretHash, clientSecretSalt }` (no
+ * plaintext) — see worker/oauth/secret.ts and worker/oauth/types.ts.
+ * Fixtures below mirror that shape.
+ */
+
+/**
  * The DO's constructor calls `state.blockConcurrencyWhile(...)` to hydrate the
  * cached client from storage, and the fetch handler reads/writes `state.storage`.
  * Both surfaces are mocked here with an in-memory implementation. The DO is
@@ -60,7 +67,10 @@ function makeFakeState(initial: Record<string, unknown> = {}) {
 function clientFixture(overrides: Partial<OAuthClient> = {}): OAuthClient {
   return {
     clientId: "client-abc",
-    clientSecret: "secret-xyz",
+    // Hex SHA-256 of "secret-xyz|salt" — placeholder; tests below don't
+    // exercise the hash compare (they exercise storage round-trip only).
+    clientSecretHash: "a".repeat(64),
+    clientSecretSalt: "test-salt-fixed-value-22",
     redirectUris: ["https://example.com/callback"],
     clientName: "test client",
     createdAt: 1700000000000,
@@ -103,10 +113,9 @@ describe("OAuthClientDO", () => {
   });
 
   it("register is idempotent — second call overwrites the first", async () => {
-    const first = clientFixture({ clientId: "v1", clientSecret: "s1" });
+    const first = clientFixture({ clientId: "v1" });
     const second = clientFixture({
       clientId: "v2",
-      clientSecret: "s2",
       createdAt: 1800000000000,
     });
 

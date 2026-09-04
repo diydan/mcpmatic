@@ -61,7 +61,7 @@ import { isPrivateUrl } from "../worker/is-private-url";
 import { handleRegister } from "../worker/oauth/register";
 import { handleAuthorize } from "../worker/oauth/authorize";
 import { handleToken } from "../worker/oauth/token";
-import type { OAuthClient, AccessToken } from "../worker/oauth/types";
+import type { OAuthClient, OAuthClientRegistration, AccessToken } from "../worker/oauth/types";
 import worker from "../worker/index";
 
 // RFC 7636 §4.6 KAT — verifier + its S256 challenge. Reused from the
@@ -237,7 +237,7 @@ async function mintSession(shim: EnvShim): Promise<string> {
  * dance ends.
  */
 async function runOAuthSetup(shim: EnvShim): Promise<{
-  client: OAuthClient;
+  client: OAuthClientRegistration;
   sessionToken: string;
   accessToken: string;
   refreshToken: string;
@@ -256,7 +256,7 @@ async function runOAuthSetup(shim: EnvShim): Promise<{
   if (registerRes.status !== 201) {
     throw new Error(`/oauth/register returned ${registerRes.status}`);
   }
-  const client = (await registerRes.json()) as OAuthClient;
+  const client = (await registerRes.json()) as OAuthClientRegistration;
 
   // Step 2: authorize — POST consent=approve with the session token.
   const authorizeRes = await handleAuthorize(
@@ -461,14 +461,14 @@ describe("OAuth + real MCP SDK client", () => {
         client_name: "clientA",
       }),
       shim.env,
-    )).json()) as OAuthClient;
+    )).json()) as OAuthClientRegistration;
     const clientB = (await (await handleRegister(
       jsonReq(`${WORKER_ORIGIN}/oauth/register`, {
         redirect_uris: [REDIRECT_URI],
         client_name: "clientB",
       }),
       shim.env,
-    )).json()) as OAuthClient;
+    )).json()) as OAuthClientRegistration;
     expect(clientA.clientId).not.toBe(clientB.clientId);
 
     const sessionToken = await mintSession(shim);

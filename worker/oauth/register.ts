@@ -19,8 +19,9 @@
  */
 import { isPrivateUrl } from "../is-private-url";
 import { makeResolve4 } from "../doh-resolve4";
-import type { OAuthClient } from "./types";
+import type { OAuthClient, OAuthClientRegistration } from "./types";
 import { base64urlNoPad } from "./encoding";
+import { freshSalt, hashClientSecret } from "./secret";
 
 /** Stub origin for the OAuthClientDO fetch — the DO ignores the URL. */
 const DO_STUB_ORIGIN = "https://stub";
@@ -81,9 +82,15 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 
   const clientId = crypto.randomUUID();
   const clientSecret = base64urlNoPad(crypto.getRandomValues(new Uint8Array(32)));
+  // Hash at rest: never persist the plaintext client_secret. The plaintext
+  // is returned to the caller once (RFC 7591 §3.2.1, confidential clients)
+  // and then lives only in the caller's memory. See worker/oauth/secret.ts.
+  const clientSecretSalt = freshSalt();
+  const clientSecretHash = await hashClientSecret(clientSecret, clientSecretSalt);
   const client: OAuthClient = {
     clientId,
-    clientSecret,
+    clientSecretHash,
+    clientSecretSalt,
     redirectUris: body.redirect_uris as string[],
     clientName: typeof body.client_name === "string" ? body.client_name : "unnamed",
     createdAt: Date.now(),
@@ -97,5 +104,15 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
     body: JSON.stringify(client),
   });
 
-  return Response.json(client, { status: 201 });
+  // Echo the plaintext client_secret ONCE so the caller can authenticate
+  // at /oauth/token. Subsequent /token calls authenticate against the hash;
+  // no plaintext is ever stored on the server.
+  const response: OAuthClientRegistration = {
+    clientId,
+    clientSecret,
+    redirectUris: client.redirectUris,
+    clientName: client.clientName,
+    createdAt: client.createdAt,
+  };
+  return Response.json(response, { status: 201 });
 }
