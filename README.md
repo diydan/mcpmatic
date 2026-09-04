@@ -44,8 +44,12 @@ the only view that can approve a field leaving your machine.
 `/s/<token>` is the **façade** — what an agent loads. It registers the tools
 and holds no profile.
 
-Both connect at once, which is the normal way to use this: the agent works on
-the façade while you watch and approve on the console.
+Both connect at once, which is the normal way to use this — and it is the
+point. People and agents work the same page together: the agent calls the
+site's structured tools while you watch the live viewport, take the keyboard
+whenever you want, and approve a profile field by name mid-flight without
+stopping the conversation. Neither of you is driving blind, and neither is
+waiting for the other to finish.
 
 ## What is true
 
@@ -66,6 +70,27 @@ a shipping address when checkout is filled.
   storefront that ships WebMCP can register its own tools. **We add none of our
   own.** Without this, a WebMCP storefront exposes nothing at all.
 - Keystrokes in the viewport cross this Worker in plaintext and are not stored.
+
+## Why WebMCP
+
+An agent can already drive a website by guessing — read the DOM, find something
+that looks like a search box, click it. That works until the site changes, and
+it fails silently when it fails.
+
+WebMCP inverts it. The site *declares* what an agent may do, names the
+arguments, and runs its own handler. So `update_cart` is Shopify's code with
+Shopify's validation, not our reconstruction of it. When a store redesigns its
+checkout, a scraper breaks and a declared tool keeps working — the contract is
+the tool, not the markup.
+
+That is also why the consent model fits rather than fights: the site opted in
+by publishing, and the human opts in per origin and per profile field. Nobody
+is being worked around.
+
+The gap was never the standard. It was reach — tools are scoped to the page
+that registered them, and the browser API is behind an origin trial, so a site
+that fully implemented WebMCP exposes nothing in almost any browser. This
+closes both.
 
 ## Architecture
 
