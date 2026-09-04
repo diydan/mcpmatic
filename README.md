@@ -94,20 +94,29 @@ closes both.
 
 ## Architecture
 
+Two browsers, and the difference matters. **Yours** just loads a web page —
+no extension, no flag, no download; ChatGPT's in-app browser is one of them.
+**Ours** is a second, remote Chromium that opens the target site, and it is the
+one the WebMCP API is installed into.
+
 ```
-ChatGPT desktop, Claude, or any MCP client
-  │  loads /s/<token>            or  speaks JSON-RPC at /mcp
+Your browser, or ChatGPT's in-app browser — nothing installed
+  │  you open  /c/<token>  (console)
+  │  an agent opens  /s/<token>  (façade)
   ▼
-Façade page  ──registerTool(…, { signal })──▶ platform discovery
-       │  WebSocket (tool_call, approval_request, frame, input)
+The page  ── document.modelContext.registerTool(…, { signal })
+       │                      └──▶ discovered as site tools
+       │  WebSocket: tool_call, approval_request, frame, input
        ▼
-Session Durable Object  ── one per session
-   • consent, audit log, approval gate      • CDP screencast + input relay
+Session Durable Object (one per session)   ◀── /mcp  JSON-RPC + OAuth 2.1
+  consent · audit log · approval gate · screencast + input relay
        │  Browser Rendering
        ▼
-Chromium ── Playwright / CDP ──▶ target origin
-            WebMCP API installed before the page's own scripts
+A second, remote Chromium ── Playwright / CDP ──▶ the target site
+  the WebMCP API is installed HERE, before the site's own scripts run
 ```
+
+So the site's tools run in our browser, and appear in yours.
 
 Load-bearing decisions:
 
