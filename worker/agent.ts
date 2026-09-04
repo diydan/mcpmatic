@@ -40,11 +40,81 @@ export type ModelEnv = {
     ) => Promise<unknown>;
   };
   OPENAI_API_KEY?: string;
+  /** Pins one model for every turn, outranking the easy/hard split. */
   OPENAI_MODEL?: string;
+  /** Small and fast: picking one tool with flat arguments. */
+  MODEL_EASY?: string;
+  /** Larger: nested argument shapes, or a turn that is chaining. */
+  MODEL_HARD?: string;
   AI_GATEWAY_ID?: string;
 };
 
-const DEFAULT_MODEL = "openai/gpt-5.5";
+/**
+ * Two models, chosen per turn.
+ *
+ * Picking one tool with flat arguments is an easy job and latency is what a
+ * person watching a demo feels, so that runs on the small model. Two things
+ * make a turn genuinely harder, and both are measurable before the call rather
+ * than guessed:
+ *
+ *  - **A tool that nests its required fields.** Shopify's `update_cart` is
+ *    `required: ["cart"]` wrapping `required: ["line_items"]`, and a weaker
+ *    model flattens that to `{query}`. Verified against the live storefront;
+ *    it is the exact case `checkArgs` was written to catch.
+ *  - **A turn that is chaining rather than picking.** After two tool results
+ *    the model is recovering or composing, not choosing from a menu.
+ *
+ * Structural signals only. Sniffing tool output for the word "failed" would
+ * bind model choice to error prose, which changes.
+ */
+const DEFAULT_EASY = "openai/gpt-5.6-luna";
+const DEFAULT_HARD = "openai/gpt-5.6-sol";
+/** Chaining begins once this many tool results are already in the transcript. */
+const CHAINING_AFTER = 2;
+
+export function chooseModel(
+  env: Pick<ModelEnv, "OPENAI_MODEL" | "MODEL_EASY" | "MODEL_HARD">,
+  tools: readonly ToolSchema[],
+  messages: readonly ChatTurn[],
+): string {
+  // An explicit single-model override outranks routing, so pinning a model
+  // for a test or a demo stays one setting.
+  if (env.OPENAI_MODEL) return env.OPENAI_MODEL;
+
+  const easy = env.MODEL_EASY || DEFAULT_EASY;
+  const hard = env.MODEL_HARD;
+  // No hard model configured means one model, as before.
+  if (!hard && !env.MODEL_EASY) {
+    return needsHardModel(tools, messages) ? DEFAULT_HARD : DEFAULT_EASY;
+  }
+  if (!hard) return easy;
+  return needsHardModel(tools, messages) ? hard : easy;
+}
+
+function needsHardModel(
+  tools: readonly ToolSchema[],
+  messages: readonly ChatTurn[],
+): boolean {
+  const toolResults = messages.filter((m) => m.role === "tool").length;
+  if (toolResults >= CHAINING_AFTER) return true;
+  return tools.some((t) => hasNestedRequired(t.inputSchema));
+}
+
+/** A required field that is itself an object with required fields of its own. */
+function hasNestedRequired(schema: unknown, depth = 0): boolean {
+  if (depth > 4 || !schema || typeof schema !== "object") return false;
+  const s = schema as {
+    properties?: Record<string, unknown>;
+    required?: unknown;
+  };
+  for (const value of Object.values(s.properties ?? {})) {
+    const child = value as { required?: unknown; properties?: unknown };
+    if (Array.isArray(child?.required) && child.required.length) return true;
+    if (hasNestedRequired(child, depth + 1)) return true;
+  }
+  return false;
+}
+
 
 const SYSTEM = `You operate websites through WebMCP tools registered on this page.
 You cannot see the remote pixels. Call get_page_state when you need to know what is on screen.
@@ -131,7 +201,7 @@ export async function runTurn(
   messages: ChatTurn[],
   tools: ToolSchema[],
 ): Promise<AgentDecision> {
-  const model = env.OPENAI_MODEL || DEFAULT_MODEL;
+  const model = chooseModel(env, tools, messages);
 
   if (env.AI) {
     // The binding takes `{author}/{model}`; the model goes in the first
