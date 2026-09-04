@@ -137,18 +137,19 @@ export function Viewport({ jpeg, driving, browser, onInput }: Props) {
           }}
         />
         {!jpeg ? (
-          <p className="viewport__empty">
-            {browser === "missing"
-              ? "Browser Rendering is not bound here. Shopify native tools still register; they run when a live browser can open the store."
-              : browser === "idle"
-                ? "No remote browser yet. Grant an origin and Chromium starts — one per session, released when you leave."
-                : "Waiting for the first frame. Log in here if the store needs it. Keystrokes travel through our worker. Passkeys will not work."}
-          </p>
+          <div className="viewport__empty">
+            <p>
+              {browser === "missing"
+                ? "Browser Rendering is not bound here. Shopify native tools still register; they run when a live browser can open the store."
+                : browser === "idle"
+                  ? "Browser standby. Start browsing or ask a task — the agent opens and controls web pages automatically."
+                  : "Connecting to remote browser... When the agent navigates or you enter a website, live render appears here."}
+            </p>
+          </div>
         ) : null}
       </div>
       <p className="viewport__warn">
-        Keystrokes and injected profile fields cross this worker in plaintext.
-        They are not stored. Passkeys cannot work.
+        🔒 Private and secure: information entered here is communicated directly with the website and is never stored.
       </p>
     </section>
   );

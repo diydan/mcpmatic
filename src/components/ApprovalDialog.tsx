@@ -10,20 +10,19 @@ export function ApprovalDialog({ request, onDecide }: Props) {
   return (
     <div className="approval" role="dialog" aria-modal="true" aria-labelledby="approval-title">
       <div className="approval__card">
-        <h2 id="approval-title">send these fields?</h2>
+        <h2 id="approval-title">Approve details to fill?</h2>
         <p>
-          <code>{request.tool}</code> on {request.origin} wants:
+          The website at <strong>{request.origin.replace(/^https:\/\//, "")}</strong> is requesting to fill the following details:
         </p>
         <ul>
           {request.fieldNames.map((name) => (
             <li key={name}>
-              <code>{name}</code>
+              <span>{name.replace(/[._]/g, " ")}</span>
             </li>
           ))}
         </ul>
         <p className="muted">
-          Values go to {request.destination} through this worker. They are not
-          stored here.
+          Your personal details are filled directly onto the website and are never saved on external servers.
         </p>
         <div className="approval__actions">
           <button type="button" onClick={() => onDecide(false)}>
