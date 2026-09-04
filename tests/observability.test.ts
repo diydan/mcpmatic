@@ -33,6 +33,27 @@ describe("the session token never reaches Workers Logs", () => {
     expect(config.observability?.logs?.invocation_logs).toBe(false);
   });
 
+  it("pairs invocation_logs=false with head_sampling_rate <= 1.0", () => {
+    // SPEC 4.1 also locks the pairing: invocation_logs stays off AND the
+    // sampling rate, if anyone tunes it down, stays within a sane range.
+    // The two together bound what a token-bearing URL could possibly leak:
+    // a *1.0* rate with invocation logs on would record every URL, so we
+    // refuse that combination. A future tightening of sampling is fine.
+    const config = readJsonc("wrangler.jsonc") as {
+      observability?: {
+        logs?: { invocation_logs?: boolean };
+        head_sampling_rate?: number;
+      };
+    };
+    expect(config.observability?.logs?.invocation_logs).toBe(false);
+    expect(config.observability?.head_sampling_rate).toBeLessThanOrEqual(1);
+    // Sanity: if invocation_logs is ever re-enabled, sampling must be
+    // actively tuned down — refuse a *1.0* default in that state.
+    if (config.observability?.logs?.invocation_logs !== false) {
+      expect(config.observability?.head_sampling_rate).toBeLessThan(0.1);
+    }
+  });
+
   it("has tracing off, which would carry the url instead", () => {
     const config = readJsonc("wrangler.jsonc") as {
       observability?: { traces?: { enabled?: boolean } };

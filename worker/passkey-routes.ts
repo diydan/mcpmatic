@@ -14,6 +14,7 @@ import {
   toStoredCredential,
 } from "./passkey";
 import { mintStepUp, putChallenge, takeChallenge } from "./passkey-challenge";
+import { consume } from "./rate-limit";
 import { isSessionToken } from "../shared/session-token";
 
 const RP_NAME = "BrowserMatic";
@@ -128,6 +129,21 @@ export async function handlePasskey(
   }
 
   if (sub === "login/options") {
+    // The login ceremony is the only public POST in this router — registration
+    // is gated by the session token, so its bucket ceiling is whatever the
+    // WAF rule says. login/options is reached by every sign-in attempt and
+    // must tolerate retries (a real authenticator only fetches it when the
+    // user clicks "sign in", so 30/min is generous); a runaway script that
+    // polls it would burn through KV writes without ever presenting an
+    // assertion. Cap it before the challenge is minted.
+    const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+    const rl = await consume(env, "passkey-login-options", ip, {
+      limit: 30,
+      windowSeconds: 60,
+    });
+    if (!rl.ok) {
+      return json({ error: "rate_limited" }, 429);
+    }
     const options = await generateAuthenticationOptions({
       rpID,
       userVerification: "required",

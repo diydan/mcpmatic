@@ -25,6 +25,7 @@
  */
 import { isPrivateUrl } from "../is-private-url";
 import { makeResolve4 } from "../doh-resolve4";
+import { consume } from "../rate-limit";
 import type { OAuthClient } from "./types";
 import { base64urlNoPad } from "./encoding";
 import { hashSecret } from "./secret";
@@ -39,6 +40,23 @@ export function isRegistrationPath(path: string): boolean {
 }
 
 export async function handleRegister(request: Request, env: Env): Promise<Response> {
+  // Rate-limit before any other work: a flood of registrations would force a
+  // DoH round trip and a DO write per call, which is what we are protecting
+  // against. The Cloudflare WAF bounds this at the edge; this bucket is the
+  // finer-grained tier that rejects a runaway loop before the validation
+  // pass below starts.
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const rl = await consume(env, "oauth-register", ip, { limit: 5, windowSeconds: 60 });
+  if (!rl.ok) {
+    return Response.json(
+      { error: "rate_limited", error_description: "too many registrations; try again shortly" },
+      {
+        status: 429,
+        headers: { "cache-control": "no-store" },
+      },
+    );
+  }
+
   if (request.method !== "POST") {
     return new Response("method not allowed", { status: 405 });
   }
