@@ -1,6 +1,6 @@
 import { STORES, type StoreKind } from "../../shared/stores";
 
-const RECENT_SITES_KEY = "mcpmatic.recentSites";
+const RECENT_SITES_KEY = "browsermatic.recentSites";
 
 export type RecentSite = {
   origin: string;
