@@ -97,34 +97,36 @@ closes both.
 
 Two browsers, and the difference matters. **Yours** just loads a web page,
 with no extension, no flag and no download. ChatGPT's in-app browser is one of
-them. **Ours** is a second, remote Chromium that opens the target site, and it is the
-one the WebMCP API is installed into.
+them. **Ours** is a second, remote Chromium that opens the target site, and it
+is the one the WebMCP API is installed into.
 
 ```mermaid
 flowchart TD
-    subgraph yours["Your browser, or ChatGPT's in-app browser. Nothing installed."]
-        console["console at /c/:token<br/>holds the profile, answers approvals"]
-        facade["facade at /s/:token<br/>what an agent loads"]
-    end
+    you["<b>Your browser</b><br/>console at /c/&lt;token&gt;<br/>nothing installed"]
+    agent["<b>Agent browser</b><br/>façade at /s/&lt;token&gt;<br/>ChatGPT's in-app browser is one"]
+    page["<b>The page</b><br/>registerTool, one AbortController each<br/>discovered as site tools"]
+    mcp["<b>/mcp endpoint</b><br/>JSON-RPC, OAuth 2.1"]
+    do["<b>Session durable object</b>, one per session<br/>consent · audit log · approval gate<br/>screencast and input relay"]
+    chromium["<b>Remote Chromium</b><br/>Playwright and CDP<br/>WebMCP API installed before site scripts"]
+    site["<b>The target site</b>"]
 
-    reg["document.modelContext.registerTool<br/>one AbortController per tool<br/>discovered as site tools"]
-    client["Any MCP client, no UI at all"]
-
-    subgraph cf["Cloudflare Worker"]
-        do["Session Durable Object, one per session<br/>consent, audit log, approval gate,<br/>screencast and input relay"]
-        chromium["A second, remote Chromium<br/>the WebMCP API is installed HERE,<br/>before the site's own scripts run"]
-    end
-
-    site["The target site"]
-
-    console --> reg
-    facade --> reg
-    reg -- "WebSocket: tool_call, frame, input" --> do
-    do -- "approval_request, console sockets only" --> console
-    client -- "/mcp: JSON-RPC, OAuth 2.1 with PKCE" --> do
-    do -- "Browser Rendering" --> chromium
-    chromium -- "Playwright and CDP" --> site
+    you --> page
+    agent --> page
+    page -- "WebSocket: tool calls, keystrokes" --> do
+    do -- "frames, state, audit rows" --> page
+    do -- "approval_request<br/>console only, never the façade" --> you
+    mcp --> do
+    do --> chromium
+    chromium --> site
     site -. "registers its own tools on the injected API" .-> chromium
+
+    style you fill:#3d3d3d,stroke:#666,color:#fff
+    style agent fill:#3d3d3d,stroke:#666,color:#fff
+    style page fill:#4c3f9e,stroke:#6f5fd0,color:#fff
+    style mcp fill:#134a7c,stroke:#2a6ba8,color:#fff
+    style do fill:#0d5c46,stroke:#1a8a6a,color:#fff
+    style chromium fill:#8a3212,stroke:#b8481f,color:#fff
+    style site fill:#3d3d3d,stroke:#666,color:#fff
 ```
 
 So the site's tools run in our browser, and appear in yours.
