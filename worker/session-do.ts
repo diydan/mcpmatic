@@ -85,6 +85,28 @@ type ToolResult = {
   resolved?: string[];
   reason?: string;
 };
+/**
+ * Refuse `https://user:pass@host/` before any navigation (2026-09-04 review,
+ * agent M5). Such a URL passes the SSRF guard — that guard classifies the
+ * host, and the host is ordinary — but the page then loads with credentials
+ * the address bar renders, a misconfigured Referer forwards, and the CDP
+ * screencast stores verbatim in its frame metadata. A URL that does not parse
+ * is left to the guards below, which are fail-closed about it.
+ */
+function hasUrlCredentials(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.username !== "" || parsed.password !== "";
+  } catch {
+    return false;
+  }
+}
+/** The one refusal text for a URL that carries `user:pass@` credentials. */
+const CREDENTIALS_REFUSED = "navigation refused (credentials-in-url)";
+/** Fresh each call: a tool result travels to callers that may extend it. */
+function credentialsRefusal(): ToolResult {
+  return { ok: false, text: CREDENTIALS_REFUSED, reason: "credentials-in-url" };
+}
 /** Grace after the last client disconnects before the browser is released. */
 const IDLE_GRACE_MS = 3 * 60 * 1000;
 const VIEWPORT = { width: 1280, height: 720 };
@@ -939,6 +961,7 @@ export class SessionDO extends DurableObject<Env> {
       const parsed = parseCallRemoteArgs(args);
       if (!parsed.ok) return { ok: false, text: parsed.text };
       const target = parsed.origin ?? "";
+      if (target && hasUrlCredentials(target)) return credentialsRefusal();
       if (target && !(await this.allowOrigin(originFromUrl(target)))) {
         return { ok: false, text: "origin not consented" };
       }
@@ -976,6 +999,7 @@ export class SessionDO extends DurableObject<Env> {
     }
     if (name === "navigate_to") {
       const target = String(args.origin ?? args.url ?? "");
+      if (hasUrlCredentials(target)) return credentialsRefusal();
       const blocked = await isPrivateUrl(target, makeResolve4());
       if (blocked) return { ok: false, text: "navigation refused (ssrf)" };
       const stable = await navigationStable(target, makeResolve4Records());
@@ -1095,6 +1119,7 @@ export class SessionDO extends DurableObject<Env> {
     const live = await this.ensureBrowser();
     if (!live) return { ok: false, text: "no browser" };
     if (originFromUrl(live.page.url()) !== manifest.origin) {
+      if (hasUrlCredentials(manifest.origin)) return credentialsRefusal();
       const blocked = await isPrivateUrl(manifest.origin, makeResolve4());
       if (blocked) return { ok: false, text: "navigation refused (ssrf)" };
       const stable = await navigationStable(manifest.origin, makeResolve4Records());
@@ -1160,6 +1185,7 @@ export class SessionDO extends DurableObject<Env> {
 
   /** The one step that leaves the page it is on, so the one that needs the guard. */
   private async gotoGuarded(live: LiveBrowser, url: string): Promise<void> {
+    if (hasUrlCredentials(url)) throw new Error(CREDENTIALS_REFUSED);
     const blocked = await isPrivateUrl(url, makeResolve4());
     if (blocked) throw new Error("navigation refused (ssrf)");
     const stable = await navigationStable(url, makeResolve4Records());

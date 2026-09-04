@@ -134,7 +134,12 @@ export default {
     }
 
     // Site-owner telemetry, gated on proving control of the origin.
-    if (path.startsWith("/site/")) {
+    //
+    // The match is anchored on the whole segment (`/site` or `/site/…`) so
+    // the route covers its own root and cannot be read as also claiming a
+    // neighbour that merely shares the characters, e.g. `/siteFoo`.
+    // (2026-09-04 review, L4.)
+    if (path === "/site" || path.startsWith("/site/")) {
       const { handleSite } = await import("./site-routes");
       return handleSite(request, env, path.slice("/site/".length));
     }
@@ -142,7 +147,7 @@ export default {
     // WebAuthn ceremony. Not under /s/<token>: a login happens *before* there
     // is a session to speak of, and registration binds an authenticator to the
     // account rather than to whichever session is open.
-    if (path.startsWith("/account/passkey/")) {
+    if (path === "/account/passkey" || path.startsWith("/account/passkey/")) {
       const { handlePasskey } = await import("./passkey-routes");
       return handlePasskey(request, env, path.slice("/account/passkey/".length));
     }
@@ -157,7 +162,7 @@ export default {
     // of falling through to the SPA fallback. Sub-dispatch is by exact
     // segment; the method guards are enforced by the handlers themselves
     // (POST for register + token, GET/POST for authorize).
-    if (path.startsWith("/oauth/")) {
+    if (path === "/oauth" || path.startsWith("/oauth/")) {
       const sub = path.slice("/oauth/".length);
       if (sub === "register") {
         const { handleRegister } = await import("./oauth/register");
