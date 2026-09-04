@@ -3,8 +3,8 @@ import { fromStoredCredential, rpIdFor, toStoredCredential } from "../worker/pas
 
 describe("rpIdFor", () => {
   it("is the hostname, without scheme or port", () => {
-    expect(rpIdFor("https://mcpmatic.dan-3c7.workers.dev/account/passkey")).toBe(
-      "mcpmatic.dan-3c7.workers.dev",
+    expect(rpIdFor("https://browsermatic.dev/account/passkey")).toBe(
+      "browsermatic.dev",
     );
   });
 

@@ -28,8 +28,16 @@ export function openBridge(
     { resolve: (s: string) => void; reject: (e: Error) => void }
   >();
 
+  const outboundQueue: ClientMessage[] = [];
+
   let closedByUs = false;
-  ws.addEventListener("open", () => handlers.onOpen?.());
+  ws.addEventListener("open", () => {
+    handlers.onOpen?.();
+    while (outboundQueue.length > 0) {
+      const msg = outboundQueue.shift();
+      if (msg) ws.send(JSON.stringify(msg));
+    }
+  });
   // Only an unexpected close is worth reporting; unmount closes on purpose.
   // Whoever is waiting hears either way: the DO replaces a same-role socket
   // the moment another console connects, and a promise left pending there is
@@ -60,12 +68,18 @@ export function openBridge(
     handlers.onMessage(msg);
   });
 
-  /** False when the socket could not take it. Fire-and-forget callers ignore
-   * that; `exec`, which owes someone an answer, does not. */
+  /** False when the socket could not take it. Fire-and-forget callers buffer
+   * during connection; `exec`, which owes someone an answer, does not. */
   const send = (msg: ClientMessage): boolean => {
-    if (ws.readyState !== WebSocket.OPEN) return false;
-    ws.send(JSON.stringify(msg));
-    return true;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(msg));
+      return true;
+    }
+    if (ws.readyState === WebSocket.CONNECTING) {
+      outboundQueue.push(msg);
+      return true;
+    }
+    return false;
   };
 
   return {

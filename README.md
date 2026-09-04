@@ -1,155 +1,168 @@
 # BrowserMatic
 
-A WebMCP session that spans origins.
+**Status:** Public beta. See [SECURITY.md](./SECURITY.md) for disclosure.
 
-Shopify storefronts already register `search_catalog`, `update_cart`, and
-`proceed_to_checkout`. This page does not reimplement those handlers. It
-proxies them, origin-qualified, so ChatGPT — which only sees tools on the
-page it loaded — can still call them. Sites with no WebMCP get a synthesised
-tool. Observed tools on the open page are registered the same way. A local
-profile fills only the fields a tool named, after the human approves them.
+**Every site's own tools. One conversation. Names only.**
 
-**Live:** <https://mcpmatic.dan-3c7.workers.dev> — open it, grant an origin,
-and the tools appear. No login, no key, no install.
+Ask an assistant to compare four stores, book dinner and a film, price a trip,
+or fill the twentieth council form, and it stalls at the same wall: a site's
+agent tools only exist on that site's own page. Four stores means four
+conversations.
 
-One session, two views. `/c/<token>` is the **console** — what you open. It
-holds the profile, and it is the only view that can approve a field leaving
-your machine. `/s/<token>` is the **façade** — what an agent loads; it
-registers the tools and holds no profile. Both can be connected at once, which
-is the normal way to use this: the agent works on the façade while you watch
-and approve on the console.
+BrowserMatic is one session that spans origins. Type a web address and we open
+it in a browser that installs the WebMCP API **before the site's own code
+runs**. The site registers its own tools, we add none, and we carry them into
+your assistant, origin-qualified, across as many sites as you like.
 
-In ChatGPT desktop use **GPT-5.6 Sol or Terra**: Luna has WebMCP disabled, and
-Enterprise/Edu workspaces have no site tools. Give it the `/s/<token>` URL and
-grant the origin in that view.
+**Live:** <https://browsermatic.dev>. No login, no key, no install.
 
-Architecture below. Design decisions are recorded in the commit history.
+![The console: an AI assistant on the left, the remote browser it is driving on
+the right, and you able to take the keyboard at any
+moment.](docs/images/console.png)
+
+## Try it in a minute
+
+1. Open the live URL, type `allbirds.com`, press Go.
+2. The store's own tools appear as chips: `search_catalog_on_allbirds_com`,
+   `update_cart_on_allbirds_com` and the rest. Ten of them, every one
+   registered by Allbirds' own script.
+3. Every site in the catalog is callable too: automation is the default, so
+   several stores sit in one tool list at once. Toggle **Autonomous** off in
+   the console if you would rather grant each site yourself.
+4. Ask for a checkout fill. It stops and names the exact profile fields before
+   any of them leave your machine.
+
+Any https origin works, not a fixed list. `inspect_site` reports what the page
+actually exposes: its own WebMCP tools if it publishes any, otherwise the
+forms, search actions and controls it does have. On Hacker News that is
+`GET //hn.algolia.com/ (q)`; on GOV.UK, `GET /search/all (keywords)`. Today those
+are inspectable but not directly callable; making them callable is on the
+roadmap.
+
+In ChatGPT desktop use **GPT-5.6 Sol or Terra**. Luna has WebMCP disabled, and
+Enterprise/Edu workspaces have no site tools. Give it the `/s/<token>` URL.
+
+## One session, two views
+
+`/c/<token>` is the **console**, the view you open. It holds the profile and is
+the only view that can approve a field leaving your machine.
+
+`/s/<token>` is the **façade**, the view an agent loads. It registers the tools
+and holds no profile.
+
+Both connect at once, which is the normal way to use this, and it is the
+point. People and agents work the same page together: the agent calls the
+site's structured tools while you watch the live viewport, take the keyboard
+whenever you want, and approve a profile field by name mid-flight without
+stopping the conversation. Neither of you is driving blind, and neither is
+waiting for the other to finish.
 
 ## What is true
 
-Do not write “your data never leaves your device.” Injected fields travel
-page → Worker → Durable Object → the target origin. The store legitimately
-learns a shipping address when checkout is filled.
+"Your data never leaves your device" would be false here. Injected fields
+travel page → Worker → Durable Object → the target origin, and a store
+legitimately learns a shipping address when checkout is filled. What follows
+is what actually holds.
 
-- The profile is never uploaded wholesale.
-- Only declared paths resolve (`fillsFrom: ["address.postcode"]` is that key).
+- The profile is never uploaded wholesale. Only declared paths resolve.
 - Values are never logged. The audit table has no value column.
-- Native WebMCP on the remote page is preferred over click replay.
-- A tool that draws on the profile cannot run unattended. It suspends until a
-  human approves it on the console, naming the exact fields; with no console
-  attached it returns `needs-console` rather than filling blanks and reporting
-  success. An agent holding the same token cannot answer for you — the façade
-  is not sent the request.
-- `document.modelContext` is a browser API behind a Chrome origin trial, and the
-  remote browser does not have it. This session installs the API into the remote
-  page before the page's own scripts run, so a storefront that ships WebMCP can
-  register its own tools. We add no tools of our own there — Allbirds registers
-  ten, and we call them. Without this, a WebMCP storefront exposes nothing at
-  all in a browser without the trial.
-- Keystrokes in the viewport cross this worker in plaintext and are not stored.
+- A tool that draws on the profile cannot run unattended. It waits ten seconds
+  for a human to approve it by name, then hands back an id to redeem rather
+  than holding the call open; with no console attached at all it returns
+  `needs-console` rather than filling blanks and reporting success. An agent
+  holding the same token cannot answer for you: the façade is never sent the
+  request.
+- Keystrokes in the viewport cross this Worker in plaintext and are not stored.
 
-ChatGPT’s site tools are per page. A store’s tools live on that store. One
-conversation that shops a merchant and uses a site without WebMCP needs a
-session page. That is this.
+## Why WebMCP
 
-## Demo origins
+An agent can already drive a website by guessing: read the DOM, find something
+that looks like a search box, click it. That works until the site changes, and
+it fails silently when it fails.
 
-| Origin | Kind | Tools |
-|---|---|---|
-| [allbirds.com](https://www.allbirds.com) | Shopify native | `search_catalog_on_allbirds_com`, `update_cart_on_allbirds_com`, `proceed_to_checkout_on_allbirds_com`, `fill_checkout_on_allbirds_com`, plus whatever else the store registers, observed live |
-| [brooklinen.com](https://www.brooklinen.com) | Shopify native | same pack, `_on_brooklinen_com` |
-| [kayak.com](https://www.kayak.com) | Synthesised | `search_flights_on_kayak_com` |
-| [gov.uk](https://www.gov.uk/find-local-council) | Synthesised + approve | `find_local_council_on_gov_uk` (postcode only) |
+WebMCP inverts it. The site *declares* what an agent may do, names the
+arguments, and runs its own handler. So `update_cart` is Shopify's code with
+Shopify's validation, not our reconstruction of it. When a store redesigns its
+checkout, a scraper breaks and a declared tool keeps working. The contract is
+the tool, not the markup.
 
-You browse the remote page; ChatGPT calls the tools on this façade. Grant any
-https origin — `list_remote_tools` reports its real WebMCP surface, and
-`call_remote_tool` plus origin-qualified `registerTool` make those tools
-callable from ChatGPT without a hand-authored manifest.
+That is also why the consent model fits rather than fights: the site opted in
+by publishing, and the human opts in per origin and per profile field. Nobody
+is being worked around.
 
-The hosted UI's header accepts any URL, not just these four. On the home
-page it initializes a session pre-granted for the chosen origin by POSTing
-`{ origin }` to `/sessions`; on the session page the same input drives the
-existing `navigate_to` tool to point the live browser at any URL. The server
-is the policy layer — URL parse, `https:` protocol, and the fail-closed
-`isPrivateUrl` SSRF guard run on every accept, and the client does no
-validation of its own.
+The gap was never the standard. It was reach. Tools are scoped to the page
+that registered them, and the browser API is behind an origin trial, so a site
+that fully implemented WebMCP exposes nothing in almost any browser. This
+closes both.
 
 ## Architecture
 
-```
-Browser (ChatGPT desktop, or any browser + polyfill)
-  │  loads https://<host>/s/<sessionToken>
-  ▼
-Façade page
-  registerAll() ──▶ document.modelContext.registerTool(…, { signal })
-       │
-       ├─ ChatGPT browser agent  (platform discovery)
-       └─ in-page chat panel     (getTools / executeTool)
-              │  WebSocket  (chat, tool_call, tool_result, frame, input)
-              ▼
-         Session Durable Object  (one per session)
-           • model turn, server-side only
-           • CDP session, screencast, input relay
-           • audit log in DO SQLite
-              │  Browser Rendering binding
-              ▼
-         Chromium  ── Playwright / CDP ──▶ target origin
-                      (real cookies, real CSP; no WebMCP injection)
-```
+Two browsers, and the difference matters. **Yours** just loads a web page,
+with no extension, no flag and no download. ChatGPT's in-app browser is one of
+them. **Ours** is a second, remote Chromium that opens the target site, and it
+is the one the WebMCP API is installed into.
 
-A tool call travels façade `execute` handler → WebSocket → DO → the remote
-page, and the result returns the same way. The façade page holds no browser
-state. Tools are registered on the **façade** document ChatGPT loaded, never
-injected into the target origin.
+```mermaid
+flowchart TD
+    you["<b>Your browser</b><br/>console at /c/&lt;token&gt;<br/>nothing installed"]
+    agent["<b>Agent browser</b><br/>façade at /s/&lt;token&gt;<br/>ChatGPT's in-app browser is one"]
+    page["<b>The page</b><br/>registerTool, one AbortController each<br/>discovered as site tools"]
+    mcp["<b>/mcp endpoint</b><br/>JSON-RPC, OAuth 2.1"]
+    do["<b>Session durable object</b>, one per session<br/>consent · audit log · approval gate<br/>screencast and input relay"]
+    chromium["<b>Remote Chromium</b><br/>Playwright and CDP<br/>WebMCP API installed before site scripts"]
+    site["<b>The target site</b>"]
 
-Choices worth stating, because they are the load-bearing ones:
+    you --> page
+    agent --> page
+    page -- "WebSocket: tool calls, keystrokes" --> do
+    do -- "frames, state, audit rows" --> page
+    do -- "approval_request<br/>console only, never the façade" --> you
+    mcp --> do
+    do --> chromium
+    chromium --> site
+    site -. "registers its own tools on the injected API" .-> chromium
 
-- **Imperative `registerTool` on the top-level page.** ChatGPT's built-in
-  browser does not support the declarative form and does not discover tools
-  registered in iframes, so `toolname` on a form is not a site tool and an
-  iframe surface would be invisible.
-- **A capability URL, not a login.** ChatGPT must be able to load the page and
-  will not carry a session cookie. A high-entropy token in the path, short TTL,
-  one active browser binding, revocable by `DELETE`. Never in a query string,
-  and the response sends `Referrer-Policy: no-referrer`.
-- **Consent gates registration, not just the chat panel.** ChatGPT's permission
-  model is per-site; a façade that fans out to arbitrary origins would route
-  around it. So: origin-qualified names (`search_flights_on_kayak_com`, never
-  `search_flights`), and no `registerTool` for an origin until the human grants
-  it. The permission model is extended to sites that cannot declare tools yet,
-  not bypassed.
-- **An audit table with no value column.** Rows are `{origin, tool,
-  fieldNames[], timestamp}`. "We don't log it" is a policy; "there is nowhere to
-  log it" is an architecture.
-- **Fail-closed SSRF on every navigation**, whoever initiated it — the tool or
-  the human. Hostname literals and resolved A/AAAA records are both checked, and
-  a resolver error rejects.
-- **No LLM in the hot path.** Tools replay a bound action sequence, or call the
-  remote page's own WebMCP handler. Execution is deterministic.
-
-There is no `unregisterTool()` in WebMCP, and a second `registerTool` with the
-same name rejects with `InvalidStateError`. So each tool holds its own
-`AbortController` and a newly granted origin adds only its own tools; already
-registered ones are never aborted and re-registered.
-
-## WebMCP is load-bearing
-
-```
-manifest ── registerAll() ── document.modelContext.registerTool(…, { signal })
-                                      │
-                    ┌─────────────────┴─────────────────┐
-                    ▼                                   ▼
-         ChatGPT (platform discovery)         in-page panel
-                                              getTools() / executeTool()
-                                                    │
-                                                    ▼
-                                              remote page
-                                              Shopify: that page's executeTool
-                                              otherwise: CDP
+    style you fill:#3d3d3d,stroke:#666,color:#fff
+    style agent fill:#3d3d3d,stroke:#666,color:#fff
+    style page fill:#4c3f9e,stroke:#6f5fd0,color:#fff
+    style mcp fill:#134a7c,stroke:#2a6ba8,color:#fff
+    style do fill:#0d5c46,stroke:#1a8a6a,color:#fff
+    style chromium fill:#8a3212,stroke:#b8481f,color:#fff
+    style site fill:#3d3d3d,stroke:#666,color:#fff
 ```
 
-Abort the registration signal and the in-page agent has no tools
-(`tests/webmcp.test.ts`).
+So the site's tools run in our browser, and appear in yours.
+
+Load-bearing decisions:
+
+- **Imperative `registerTool` on the top-level page.** ChatGPT's browser has no
+  declarative form and does not discover tools in iframes.
+- **A capability URL, not a login.** ChatGPT will not carry a session cookie.
+  High-entropy token in the path, short TTL, revocable, `Referrer-Policy:
+  no-referrer`.
+- **Origin-qualified names, always.** `search_flights_on_kayak_com`, never
+  `search_flights`. ChatGPT's permission model is per-site, so spanning origins
+  extends it rather than routing around it.
+- **One `AbortController` per tool.** WebMCP has no `unregisterTool` and a
+  duplicate name throws, so granting a fourth store never disturbs the first
+  three.
+- **Automation is the default; the grant click is the option.** Autonomous mode
+  is on unless you turn it off. Granting an *origin* is automatic; releasing a
+  *profile field* is not.
+- **An audit table with no value column.** "We don't log it" is a policy;
+  "there is nowhere to log it" is an architecture.
+- **Fail-closed SSRF on every navigation**, whoever initiated it. Hostname
+  literals and resolved A/AAAA records both checked; a resolver error rejects.
+- **No LLM in the hot path.** Tools replay a bound sequence or call the remote
+  page's own handler. Execution is deterministic.
+
+## Two surfaces
+
+The façade at `/s/<token>` is what ChatGPT's in-app browser sees. The same
+Worker also speaks MCP at `/mcp` over JSON-RPC, with a bearer token or OAuth
+2.1 and PKCE. It is verified against the official MCP SDK, so any compliant
+client drives
+the identical session headlessly. See [docs/oauth.md](docs/oauth.md).
 
 ## Setup
 
@@ -157,177 +170,43 @@ Abort the registration signal and the in-page agent has no tools
 pnpm install
 pnpm test
 pnpm dev
-pnpm run deploy   # `pnpm deploy` is pnpm’s own workspace command, not this script
+pnpm run deploy   # `pnpm deploy` is pnpm's own workspace command, not this script
 ```
 
-There is no API key to set. The in-page agent reaches an OpenAI model through
-the Cloudflare `ai` binding and AI Gateway Unified Billing — Cloudflare holds
-the provider credentials, so no key is stored in this Worker or typed on a
-command line. It needs prepaid AI Gateway credits on the account.
+Browser Rendering must be enabled on the account. One browser per session,
+started on the first grant and released when you leave.
 
-If you would rather call OpenAI directly, drop the `ai` binding from
-`wrangler.jsonc` and set the key instead; `runTurn` takes that path when there
-is no binding. Either way the key never reaches the page.
+Two models. A small one answers each turn; if it produces arguments the
+tool's own schema rejects, the larger one gets one retry at the same turn.
+Chaining turns start on the larger one. Luna and Sol by default, the cost-optimised
+and frontier members of the gpt-5.6 family, which speak the Responses API
+rather than Chat Completions. `OPENAI_MODEL`
+pins a single model for every turn.
 
-```bash
-npx wrangler secret put OPENAI_API_KEY   # fallback path only
-```
+No API key is required. The optional in-page chat panel reaches a model through
+the Cloudflare `ai` binding; drop that binding and set `OPENAI_API_KEY` to call
+directly. Either way the key never reaches the page. ChatGPT drives the
+registered tools with no model configured at all.
 
-`OPENAI_MODEL` picks the model (`openai/gpt-5.5` by default; a bare
-`gpt-5.5` also works). See `.dev.vars.example` for the optional settings.
+Façade headers (`public/_headers`): `Origin-Agent-Cluster: ?1`,
+`Permissions-Policy: tools=*`, `Referrer-Policy: no-referrer`.
 
-ChatGPT desktop: GPT-5.6 Sol or Terra (Luna has WebMCP disabled). Same
-`/s/<token>` URL. ChatGPT calls the registered tools with no model
-configured at all — the spine does not depend on this.
+## Limits
 
-Browser Rendering must be enabled on the account. Sessions launch with
-`recording: false`. One browser per session, started on your first grant and
-released when you leave.
+- A passkey signs you in to BrowserMatic itself, on your own device. It cannot
+  log you in to a *remote site*: that authenticator is on your machine and the
+  remote browser runs in Cloudflare's network. Demo remote logins with a
+  password or OAuth.
+- Selectors in hand-written manifests are bound at authoring time and break
+  when a site redesigns.
+- Verified against Allbirds and Brooklinen. The `/mcp` surface is proven
+  against the MCP SDK; individual MCP clients are listed in
+  `docs/MCP_CLIENTS.md`.
 
-Passkeys cannot work here: the authenticator lives on your device, and the
-login happens in a browser running in Cloudflare's network. Demo on a
-password or OAuth login.
+Design notes live in commits and tests.
 
-Façade headers (`public/_headers`):
+## See also
 
-```
-Origin-Agent-Cluster: ?1
-Permissions-Policy: tools=*
-Referrer-Policy: no-referrer
-```
-
-## Phase 1.5: OAuth
-
-Phase 1 shipped bearer-token auth at `/mcp` — a high-entropy 64-hex session
-token that ChatGPT and Claude paste into their MCP server config. Phase 1.5
-adds a spec-compliant OAuth 2.1 surface so any compliant MCP client can
-register itself, drive a hosted consent page, and acquire its own access
-token. Both shapes are accepted at `/mcp`; nothing existing breaks.
-
-### Routes
-
-| Route | Method | Spec | Purpose |
-|---|---|---|---|
-| `/oauth/register` | `POST` | [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591) | Dynamic client registration. Body `{redirect_uris, client_name?}`. Returns `{clientId, clientSecret}`. `redirect_uris` are SSRF-checked at registration time; private URLs fail-closed. |
-| `/oauth/authorize` | `GET`, `POST` | [RFC 6749 §4.1.1](https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.1) | Hosted consent UI. `GET` renders the page; `POST` with `consent=approve\|deny` + `session_token` issues the auth code and 302s to the client's `redirect_uri?code=...&state=...`. |
-| `/oauth/token` | `POST` | [RFC 6749 §4.1.3](https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.3) | Token endpoint. `grant_type=authorization_code` mints a fresh access + refresh pair; `grant_type=refresh_token` rotates. Errors follow RFC 6749 §5.2 shape (`{error, error_description}`). |
-| `/mcp` | `POST` | [RFC 6749 §7](https://datatracker.ietf.org/doc/html/rfc6749#section-7) | Unchanged. Now accepts two bearer shapes — see below. |
-
-### Two bearer shapes at `/mcp`
-
-`worker/oauth/mcp-bridge.ts` resolves the bearer before the JSON-RPC handler
-sees the request. Disambiguation is by length and charset, not by a
-`WWW-Authenticate` round-trip:
-
-1. **64 hex chars** (case-insensitive) — Phase 1 session token. Pass-through
-   to the SessionDO. No KV lookup; the bearer IS the session.
-2. **43 base64url chars** — Phase 1.5 OAuth access token. Resolved via
-   `OAUTH_TOKENS.get("token:<access_token>")`. The stored payload carries
-   the original `userSessionToken`, which is what `/mcp` hands to the
-   SessionDO. `expiresAt` is a second-line defense on top of KV's
-   `expirationTtl`; either one rejecting it means 401.
-3. **Anything else** — 401 with no information leak about which shapes were
-   tried.
-
-This is what lets a single Worker URL (`https://<host>/mcp`) work for both
-the Phase 1 "paste a session token" clients and Phase 1.5's full OAuth
-clients without any per-deployment config.
-
-### PKCE S256 is mandatory
-
-Per [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636), every
-authorization-code request MUST include `code_challenge_method=S256`.
-`plain` is rejected at `/oauth/authorize` with
-`{"error":"invalid_request","error_description":"PKCE S256 required"}`.
-`verifyPkce` enforces the RFC 7636 §4.6 verifier length/charset rules
-(43–128 chars from `[A-Za-z0-9-._~]`) before hashing and uses a
-constant-time compare on the digest.
-
-### Hosted consent flow
-
-The consent page lives at the Worker, not at a separate origin. This keeps
-session tokens inside the same security perimeter as the session they bind.
-
-1. Client redirects the user to `GET /oauth/authorize?response_type=code&client_id=...&redirect_uri=...&state=...&code_challenge=...&code_challenge_method=S256`.
-2. The Worker renders an HTML form. The `session_token` is **not** in the
-   URL — the user pastes it into the form. The page sends
-   `Referrer-Policy: no-referrer` and `Cache-Control: no-store`, so the
-   token never lands in `Referer` headers, browser history, or intermediary
-   caches.
-3. On `POST /oauth/authorize`, the form's `consent` field carries either
-   `approve` or `deny`. The Worker verifies the `session_token` against the
-   SessionDO sentinel row before binding it to an auth code — a random
-   pasted string mints no code.
-4. On approve, the Worker mints a 32-byte `code`, persists it as an
-   `OAuthCodeDO` with a 10-minute TTL, and 302s to
-   `redirect_uri?code=...&state=...`. On deny, it 302s with
-   `error=access_denied&state=...`.
-
-### SDK usage
-
-Driving the full OAuth flow + first MCP call from
-[`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk)
-is six lines of real work:
-
-```ts
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from
-  "@modelcontextprotocol/sdk/client/streamableHttp.js";
-
-// 1. Register a client (RFC 7591). Returns { clientId, clientSecret }.
-const reg = await fetch(`${WORKER}/oauth/register`, {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ redirect_uris: ["https://example.com/cb"] }),
-}).then(r => r.json());
-
-// 2. Build a PKCE S256 verifier + challenge (RFC 7636).
-const verifier = base64urlNoPad(crypto.getRandomValues(new Uint8Array(32)));
-const challenge = base64urlNoPad(new Uint8Array(
-  await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
-));
-
-// 3. Direct the user to /oauth/authorize?…&code_challenge=<challenge>&code_challenge_method=S256
-//    The hosted consent page POSTs back with the session_token; the Worker
-//    redirects to redirect_uri?code=...&state=... . Capture the code.
-
-// 4. Exchange code → tokens.
-const tok = await fetch(`${WORKER}/oauth/token`, {
-  method: "POST",
-  headers: { "content-type": "application/x-www-form-urlencoded" },
-  body: new URLSearchParams({
-    grant_type: "authorization_code",
-    code, redirect_uri: "https://example.com/cb",
-    code_verifier: verifier,
-    client_id: reg.clientId, client_secret: reg.clientSecret,
-  }),
-}).then(r => r.json());
-
-// 5. Connect.
-const transport = new StreamableHTTPClientTransport(new URL(`${WORKER}/mcp`), {
-  requestInit: { headers: { Authorization: `Bearer ${tok.access_token}` } },
-});
-const client = new Client({ name: "demo", version: "0.0.0" }, { capabilities: {} });
-await client.connect(transport);
-```
-
-The same SDK is what ships in Claude Desktop and ChatGPT's MCP integrations,
-so anything the SDK accepts is what those clients accept.
-
-### Tests
-
-- `tests/oauth-e2e.test.ts` — in-process integration walk
-  (register → authorize → token → /mcp) with direct handler calls. Covers
-  refresh-token rotation, code single-use, forged-`session_token`
-  rejection.
-- `tests/oauth-e2e-sdk.test.ts` — same flow, but the final `/mcp`
-  handshake is driven by the real `@modelcontextprotocol/sdk` `Client` +
-  `StreamableHTTPClientTransport`. Asserts `serverInfo.name === "browsermatic"`.
-  This is wire-format compatibility proof.
-- `tests/oauth-smoke.sh` — manual post-deploy procedure. Run after
-  `pnpm exec wrangler deploy` (which requires
-  `wrangler kv namespace create OAUTH_TOKENS` first to replace the
-  `"to-be-created"` placeholder id) against the live Worker URL.
-- `tests/worker-routes.test.ts` — route-wiring guard. Confirms
-  `worker/index.ts` dispatches `/oauth/register`, `/oauth/authorize`,
-  `/oauth/token` to the correct handlers.
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — setup, testing, PR conventions.
+- [`SECURITY.md`](./SECURITY.md) — how to report a vulnerability.
+- [`LICENSE`](./LICENSE) — MIT.

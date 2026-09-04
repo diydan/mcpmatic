@@ -15,10 +15,20 @@ type Props = {
   audit: AuditRow[];
   lines: Line[];
   busy: boolean;
+  mode?: "normal" | "tech";
+  suggestions?: string[];
   onSend: (text: string) => void;
 };
 
-export function ChatPanel({ tools, audit, lines, busy, onSend }: Props) {
+export function ChatPanel({
+  tools,
+  audit,
+  lines,
+  busy,
+  mode = "normal",
+  suggestions = [],
+  onSend,
+}: Props) {
   const [draft, setDraft] = useState("");
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -28,17 +38,19 @@ export function ChatPanel({ tools, audit, lines, busy, onSend }: Props) {
 
   return (
     <section className="chat" aria-label="Agent">
-      <ul className="chat__tools">
-        {tools.length === 0 ? (
-          <li className="muted">no tools registered — check the log</li>
-        ) : (
-          tools.map((t) => (
-            <li key={t.name}>
-              <code>{t.name}</code>
-            </li>
-          ))
-        )}
-      </ul>
+      {mode === "tech" && (
+        <ul className="chat__tools">
+          {tools.length === 0 ? (
+            <li className="muted">no tools registered — check the log</li>
+          ) : (
+            tools.map((t) => (
+              <li key={t.name}>
+                <code>{t.name}</code>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
       <div className="chat__log" ref={scroller} role="log">
         {lines.map((line, i) => {
           // Assistant and tool lines come from uncontrolled sources
@@ -74,6 +86,23 @@ export function ChatPanel({ tools, audit, lines, busy, onSend }: Props) {
           );
         })}
       </div>
+      {suggestions.length > 0 && (
+        <div className="chat__suggestions" aria-label="Suggested actions">
+          <div className="chat__suggestions-list">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                className="chat__suggestion-chip"
+                disabled={busy}
+                onClick={() => onSend(suggestion)}
+              >
+                ✨ {suggestion}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <form
         className="chat__form"
         onSubmit={(e) => {
@@ -91,28 +120,30 @@ export function ChatPanel({ tools, audit, lines, busy, onSend }: Props) {
           id="chat-input"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Ask the agent to use a tool…"
+          placeholder="Ask AI to browse, compare, or fill..."
           disabled={busy}
         />
         <button type="submit" disabled={busy || !draft.trim()}>
           Send
         </button>
       </form>
-      <aside className="chat__audit" aria-label="Audit trail">
-        <h2>audit</h2>
-        <p className="muted">names only — no values, no keystrokes</p>
-        <ul>
-          {audit.map((row, i) => (
-            <li key={`${row.timestamp}-${i}`}>
-              <code>{row.tool}</code>
-              <span>{row.origin.replace(/^https:\/\//, "")}</span>
-              {row.fieldNames.length ? (
-                <span>{row.fieldNames.join(", ")}</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </aside>
+      {mode === "tech" && (
+        <aside className="chat__audit" aria-label="Activity log">
+          <h2>Activity log</h2>
+          <p className="muted">Actions taken by AI (passwords, keystrokes, and values are never stored)</p>
+          <ul>
+            {audit.map((row, i) => (
+              <li key={`${row.timestamp}-${i}`}>
+                <code>{row.tool}</code>
+                <span>{row.origin.replace(/^https:\/\//, "")}</span>
+                {row.fieldNames.length ? (
+                  <span>{row.fieldNames.join(", ")}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </aside>
+      )}
     </section>
   );
 }

@@ -41,13 +41,13 @@ export function PasskeyBar({ sessionToken, onSignedIn }: Props) {
             const result = await registerPasskey(sessionToken);
             setStatus(
               result.ok
-                ? "passkey added — this account now works on another device"
+                ? "Passkey saved: your preferences will sync across devices"
                 : result.message,
             );
           })
         }
       >
-        add a passkey
+        Save with Passkey
       </button>
       <button
         type="button"
@@ -57,14 +57,14 @@ export function PasskeyBar({ sessionToken, onSignedIn }: Props) {
             const result = await signInWithPasskey();
             if (result.ok && result.accountId) {
               onSignedIn(result.accountId);
-              setStatus("signed in — grants restored");
+              setStatus("Signed in — saved settings restored");
               return;
             }
-            setStatus(result.ok ? "signed in" : result.message);
+            setStatus(result.ok ? "Signed in" : result.message);
           })
         }
       >
-        sign in with a passkey
+        Sign in with Passkey
       </button>
       {status ? <span className="passkey__status">{status}</span> : null}
     </div>

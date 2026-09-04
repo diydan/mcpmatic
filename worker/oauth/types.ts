@@ -7,6 +7,14 @@ export type OAuthClient = {
   createdAt: number;
 };
 
+export type OAuthClientRegistration = {
+  clientId: string;
+  clientSecret: string;
+  redirectUris: string[];
+  clientName: string;
+  createdAt: number;
+};
+
 export type AuthCode = {
   code: string;
   clientId: string;

@@ -24,7 +24,7 @@ function makeEnv(accountId: string | null) {
 }
 
 function post(sub: string, body: unknown) {
-  return new Request(`https://mcpmatic.test/account/passkey/${sub}`, {
+  return new Request(`https://browsermatic.test/account/passkey/${sub}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

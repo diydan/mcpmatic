@@ -79,7 +79,7 @@ export const WEBMCP_POLYFILL = `(() => {
   });
   // Marker so the worker can report honestly whether the site's tools ran on
   // a real implementation or on this one.
-  Object.defineProperty(window, "__mcpmaticPolyfilledWebMCP", {
+  Object.defineProperty(window, "__browsermaticPolyfilledWebMCP", {
     value: true,
     configurable: true,
   });

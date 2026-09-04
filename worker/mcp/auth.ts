@@ -1,13 +1,17 @@
 /**
  * Bearer-token auth for the MCP surface.
  *
- * Phase 1: the bearer token IS the session token (64 hex chars).
- * Phase 1.5: a registered OAuth client may also present a 43-char
- * base64url access token minted at /oauth/token — in that case the bearer
- * is resolved, via `resolveMcpToken`, to the underlying session token
- * before the SessionDO is looked up. The AuthOk / AuthErr shape returned
- * here is unchanged so downstream `handleMcp` does not need to know which
- * kind of bearer it received.
+ * The bearer at /mcp is one of two shapes — both are accepted and both
+ * resolve to a session token before the SessionDO is consulted:
+ *
+ *   - A 64-hex session token, pasted directly into the MCP server config
+ *     by ChatGPT or Claude. The bearer IS the session.
+ *   - A 43-char base64url access token minted at /oauth/token. `resolveMcpToken`
+ *     looks it up in `OAUTH_TOKENS` and returns the `userSessionToken` it
+ *     was bound to at issue time.
+ *
+ * The `AuthOk` / `AuthErr` shape returned here is the same for both kinds
+ * so downstream `handleMcp` does not need to know which bearer it received.
  */
 
 import { resolveMcpToken } from "../oauth/mcp-bridge";

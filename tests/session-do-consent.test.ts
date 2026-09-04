@@ -1,6 +1,6 @@
 /**
- * Tests for SessionDO's consent surface and the TTL rules sprint item P1.2
- * requires: the clock starts at mint, and every consent route refuses an
+ * Tests for SessionDO's consent surface and the TTL rules it
+ * exercises: the clock starts at mint, and every consent route refuses an
  * expired session.
  *
  * SessionDO extends `DurableObject` from `cloudflare:workers`, which the Node
@@ -127,7 +127,7 @@ function expire(sql: ReturnType<typeof makeSql>): void {
   );
 }
 
-describe("SessionDO consent — TTL (P1.2)", () => {
+describe("SessionDO consent — TTL", () => {
   let ctx: FakeCtx;
   let sql: ReturnType<typeof makeSql>;
   let do_: SessionDO;

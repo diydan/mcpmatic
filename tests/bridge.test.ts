@@ -87,7 +87,7 @@ beforeEach(() => {
   last = null;
   Object.assign(globalThis, {
     WebSocket: FakeSocket,
-    location: { protocol: "https:", host: "mcpmatic.test" },
+    location: { protocol: "https:", host: "browsermatic.test" },
   });
 });
 

@@ -32,7 +32,10 @@ import {
 } from "./agent";
 import { MANIFESTS, manifestFor } from "./manifests";
 import type { ToolManifest } from "../shared/manifest";
-import { mergeAutonomousConsent } from "../shared/autonomous";
+import {
+  autonomousFromStored,
+  mergeAutonomousConsent,
+} from "../shared/autonomous";
 import { buildToolList } from "./mcp/tools";
 import {
   callNativeTool,
@@ -43,6 +46,11 @@ import {
 } from "./native-webmcp";
 import type { DiscoveredTool } from "../shared/protocol";
 import { WEBMCP_POLYFILL } from "./inject-webmcp";
+import {
+  describeInspection,
+  inspectPage,
+  type InspectFn,
+} from "./inspect-site";
 import {
   PageErrorLog,
   attachPageErrorCapture,
@@ -523,8 +531,20 @@ export class SessionDO extends DurableObject<Env> {
    * for granted origins.
    */
   async listTools(): Promise<ToolSchema[]> {
-    const consented = new Set(this.readConsent());
+    // Autonomous grants an origin at call time, which made the catalog
+    // callable but not discoverable: an MCP client listed five spine tools,
+    // never learned the merchant tools existed, and so never called them. The
+    // listing has to agree with what a call would allow, and the façade
+    // already merges the same way client-side.
+    const consented = new Set(this.listingOrigins());
     return (await buildToolList(consented, this.env.MANIFEST_REGISTRY)) as unknown as ToolSchema[];
+  }
+
+  /** Origins a tool may be listed for: granted, plus the catalog when autonomous. */
+  private listingOrigins(): string[] {
+    const granted = this.readConsent();
+    if (!this.readAutonomous()) return granted;
+    return mergeAutonomousConsent(granted, MANIFESTS.map((m) => m.origin));
   }
 
   /**
@@ -909,6 +929,27 @@ export class SessionDO extends DurableObject<Env> {
       }
       return { ok: true, text: describePageErrors(entries) };
     }
+    if (name === "inspect_site") {
+      // Same rule as list_remote_tools: reports on the page that is open and
+      // never starts a browser. Read-only, so it needs no consent beyond the
+      // grant that opened the page.
+      const live = this.live;
+      if (!live?.page.evaluate) {
+        return {
+          ok: true,
+          text: "No remote page open yet. Call navigate_to with a granted origin first.",
+        };
+      }
+      const found = await discoverNativeTools(
+        live.page.evaluate.bind(live.page) as DiscoverFn,
+      );
+      const page = await inspectPage(
+        live.page.evaluate.bind(live.page) as unknown as InspectFn,
+        found.ok ? (found.tools ?? []) : [],
+      );
+      return { ok: true, text: describeInspection(page) };
+    }
+
     if (name === "list_remote_tools") {
       // Reports on the page that is open; never starts a browser, same rule as
       // get_page_state.
@@ -1376,7 +1417,8 @@ export class SessionDO extends DurableObject<Env> {
         `SELECT value FROM meta WHERE key = 'autonomous' LIMIT 1`,
       )
       .toArray()[0];
-    return row?.value === "1";
+    // Absent means on. See autonomousFromStored.
+    return autonomousFromStored(row?.value);
   }
 
   /**

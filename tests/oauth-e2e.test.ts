@@ -1,7 +1,7 @@
 /**
  * @vitest-environment node
  *
- * End-to-end OAuth flow integration test (Phase 1.5).
+ * End-to-end OAuth flow integration test.
  *
  * Walks the full sequence a real MCP client would walk:
  *
@@ -48,7 +48,7 @@ import { handleAuthorize } from "../worker/oauth/authorize";
 import { handleToken } from "../worker/oauth/token";
 import { handleMcp } from "../worker/mcp/server";
 import { SESSION_TOKEN_RE } from "../shared/session-token";
-import type { OAuthClient, AuthCode, AccessToken } from "../worker/oauth/types";
+import type { OAuthClient, OAuthClientRegistration, AuthCode, AccessToken } from "../worker/oauth/types";
 
 // RFC 7636 §4.6 KAT — verifier + its S256 challenge. Used here so the real
 // `verifyPkce` (not a mock) accepts the verifier.
@@ -249,7 +249,7 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
       shim.env,
     );
     expect(registerRes.status).toBe(201);
-    const registered = (await registerRes.json()) as OAuthClient;
+    const registered = (await registerRes.json()) as OAuthClientRegistration;
     expect(registered.clientId).toMatch(UUID_RE);
     expect(registered.clientSecret).toMatch(BASE64URL_RE);
     expect(registered.redirectUris).toEqual([REDIRECT_URI]);
@@ -449,7 +449,7 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
       }),
       shim.env,
     );
-    const registered = (await registerRes.json()) as OAuthClient;
+    const registered = (await registerRes.json()) as OAuthClientRegistration;
 
     const forgedToken = "f".repeat(64);
     expect(shim.sessions.has(forgedToken)).toBe(false);
@@ -484,7 +484,7 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
       }),
       shim.env,
     );
-    const registered = (await registerRes.json()) as OAuthClient;
+    const registered = (await registerRes.json()) as OAuthClientRegistration;
 
     const authorizeRes = await handleAuthorize(
       formReq("https://worker.local/oauth/authorize", {
@@ -536,7 +536,7 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
     const registered = (await (await handleRegister(
       jsonReq("https://worker.local/oauth/register", { redirect_uris: [REDIRECT_URI] }),
       shim.env,
-    )).json()) as OAuthClient;
+    )).json()) as OAuthClientRegistration;
 
     const authorizeRes = await handleAuthorize(
       formReq("https://worker.local/oauth/authorize", {

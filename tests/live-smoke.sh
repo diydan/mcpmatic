@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Manual smoke test for Phases A–C against a live mcpmatic Worker.
+# Manual smoke test against a live BrowserMatic Worker.
 #
 # Everything in the test suite uses a fake: no real authenticator, no live
 # storefront, no deployed Worker. This script is the part that cannot be
@@ -8,7 +8,7 @@
 # Shopify storefront answering with its own WebMCP schemas.
 #
 # Usage:
-#   BASE_URL=https://mcpmatic.example ./tests/phases-smoke.sh
+#   BASE_URL=https://browsermatic.example ./tests/live-smoke.sh
 #
 # Not run in CI. Run it after `pnpm run deploy`, which must apply the new
 # v4 (AccountDO) and v5 (SiteDO) migrations.
@@ -33,7 +33,7 @@ CREATE=$(curl -sS -X POST "$BASE_URL/sessions" -H 'content-type: application/jso
 SESSION=$(echo "$CREATE" | grep -o '"sessionToken":"[a-f0-9]*"' | cut -d'"' -f4)
 [ -n "$SESSION" ] && pass "session created" || fail "no session token: $CREATE"
 echo "$CREATE" | grep -q '"consoleUrl"' \
-  && pass "consoleUrl returned (Phase B)" || fail "no consoleUrl"
+  && pass "consoleUrl returned" || fail "no consoleUrl"
 echo "  console: $BASE_URL/c/$SESSION"
 echo "  facade:  $BASE_URL/s/$SESSION"
 
@@ -42,7 +42,7 @@ curl -sS -X POST "$BASE_URL/s/$SESSION/consent" \
   -H 'content-type: application/json' -d "{\"origin\":\"$ORIGIN\"}" >/dev/null
 pass "granted $ORIGIN"
 
-echo "== 3. tools are listed and labelled (Phase A) =="
+echo "== 3. tools are listed and labelled =="
 TOOLS=$(mcp tools/list '{}')
 echo "$TOOLS" | grep -q 'fill_checkout_on_allbirds_com' \
   && pass "fill_checkout listed" || fail "fill_checkout missing"
@@ -50,7 +50,7 @@ echo "$TOOLS" | grep -q 'Requires human approval in the BrowserMatic console' \
   && pass "approval note present" || fail "approval note missing"
 
 echo "== 4. THE BUG: fill_checkout with no console attached =="
-# Before Phase A this filled six empty strings and returned ok:true.
+# Before this assertion was tightened, it filled six empty strings and returned ok:true.
 FILL=$(mcp tools/call '{"name":"fill_checkout_on_allbirds_com","arguments":{}}')
 echo "$FILL" | grep -q 'needs-console' \
   && pass "refused with needs-console" \
@@ -80,13 +80,13 @@ echo "$REMOTE" | grep -q '"properties":{"cart":{"type":"object","required"' \
   && pass "nested required[] present — the case checkArgs must recurse for" \
   || echo "  (no nested required seen; schemas may have changed shape)"
 
-echo "== 6. audit is readable and has no value column (Phase B) =="
+echo "== 6. audit is readable and has no value column =="
 AUDIT=$(curl -sS "$BASE_URL/s/$SESSION/audit")
 echo "$AUDIT" | grep -q '"rows"' && pass "audit readable" || fail "audit: $AUDIT"
 echo "$AUDIT" | grep -q '"fieldNames"' \
   && pass "field names present" || echo "  (no rows yet)"
 
-echo "== 7. telemetry is gated (Phase C) =="
+echo "== 7. telemetry is gated =="
 UNAUTH=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/site/telemetry?origin=$ORIGIN")
 [ "$UNAUTH" = "400" ] && pass "no token → 400" || fail "expected 400, got $UNAUTH"
 BADTOK=$(curl -sS -o /dev/null -w '%{http_code}' \

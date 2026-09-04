@@ -122,11 +122,10 @@ export function Consent({
   const onCancel = () => dispatch((u) => reduceConsentUx(u, { kind: "cancel" }));
 
   return (
-    <section className="consent" aria-label="Origin consent">
-      <h2>grant an origin</h2>
+    <section className="consent" aria-label="Connected websites">
+      <h2>Connected websites</h2>
       <p>
-        ChatGPT is granted this page. Tools for another origin stay unregistered
-        until you say so. Shopify stores keep their own WebMCP; we only proxy it.
+        Websites you allow AI to search and browse. You are always in control of which sites AI accesses.
       </p>
       <button
         type="button"

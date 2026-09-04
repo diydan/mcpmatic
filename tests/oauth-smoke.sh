@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Manual OAuth end-to-end smoke test against a live mcpmatic Worker.
+# Manual OAuth end-to-end smoke test against a live browsermatic Worker.
 #
 # The CI integration test (tests/oauth-e2e.test.ts) covers the full OAuth flow
 # in-process; this script is for running the same flow against a deployed URL
@@ -9,7 +9,7 @@
 # real KV.
 #
 # Usage:
-#   BASE_URL=https://mcpmatic.example ./tests/oauth-smoke.sh
+#   BASE_URL=https://browsermatic.example ./tests/oauth-smoke.sh
 #
 # What it does:
 #   1. POST /sessions                          → sessionToken (64 hex)

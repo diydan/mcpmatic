@@ -8,7 +8,7 @@
     <script>
       (function () {
         try {
-          var t = localStorage.getItem("mcpmatic.theme");
+          var t = localStorage.getItem("browsermatic.theme");
           if (t !== "light" && t !== "dark") {
             t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
           }

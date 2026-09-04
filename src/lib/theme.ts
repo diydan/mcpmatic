@@ -1,6 +1,6 @@
 export type Theme = "dark" | "light";
 
-const KEY = "mcpmatic.theme";
+const KEY = "browsermatic.theme";
 
 export function readTheme(): Theme {
   try {

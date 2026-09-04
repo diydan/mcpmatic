@@ -1,3 +1,8 @@
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+import { handleToken } from "../worker/oauth/token";
+import { hashSecret, verifySecret } from "../worker/oauth/secret";
+import type { AccessToken, AuthCode, OAuthClient } from "../worker/oauth/types";
 /**
  * @vitest-environment node
  *
@@ -19,11 +24,6 @@
  * plaintext + the clientId), matching `register.ts`. Tests POST the
  * plaintext to `/oauth/token` per RFC 6749 §2.3.1.
  */
-import { describe, expect, it, vi, beforeEach } from "vitest";
-
-import { handleToken } from "../worker/oauth/token";
-import { hashSecret } from "../worker/oauth/secret";
-import type { AccessToken, AuthCode, OAuthClient } from "../worker/oauth/types";
 
 type FetchMock = ReturnType<typeof vi.fn>;
 

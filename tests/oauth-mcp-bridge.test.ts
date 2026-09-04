@@ -4,7 +4,7 @@ import { resolveMcpToken } from "../worker/oauth/mcp-bridge";
 import type { AccessToken } from "../worker/oauth/types";
 
 /**
- * Tests for the Phase 1.5 /mcp auth bridge.
+ * Tests for the /mcp auth bridge.
  *
  * `resolveMcpToken` is a pure function over (token, env) — its env
  * dependency is just `OAUTH_TOKENS.get`. Tests build a minimal env shim
@@ -47,7 +47,7 @@ function accessToken(overrides: Partial<AccessToken> = {}): AccessToken {
   };
 }
 
-describe("resolveMcpToken — Phase 1 session token pass-through", () => {
+describe("resolveMcpToken — session token pass-through", () => {
   it("returns a 64-hex token verbatim and does NOT call KV", async () => {
     const { env, kv } = makeEnv();
     const out = await resolveMcpToken("a".repeat(64), env);
@@ -197,7 +197,7 @@ describe("authenticate(request, env) — bridge integration", () => {
     if (result.ok) expect(result.token).toBe(SESSION_TOKEN);
   });
 
-  it("returns the same session token verbatim when a Phase 1 token is presented", async () => {
+  it("returns the same session token verbatim when a session token is presented", async () => {
     const { env, kv } = makeEnv();
     const req = new Request("https://example.com/mcp", {
       headers: { Authorization: `Bearer ${SESSION_TOKEN}` },

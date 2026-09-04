@@ -9,6 +9,13 @@
  * session_token that becomes the /mcp bearer flows through the URL —
  * keeping the `Referer` empty means a token that lands on an external
  * redirect target doesn't leak back via the next navigation.
+ *
+ * `X-Frame-Options: DENY` and `frame-ancestors 'none'` (in the CSP) keep
+ * the SPA out of every framing surface — the audit (§1.5) flagged their
+ * absence as a public-readiness gap.
+ *
+ * The rationale for each CSP directive lives as a comment on the literal
+ * below — see the `Content-Security-Policy` entry for the source of truth.
  */
 export const FACADE_HEADERS: Record<string, string> = {
   "Origin-Agent-Cluster": "?1",

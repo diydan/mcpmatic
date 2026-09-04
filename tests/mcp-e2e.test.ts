@@ -4,7 +4,7 @@
  * End-to-end MCP protocol test. Drives handleMcp directly with hand-crafted
  * fetch Requests — the @modelcontextprotocol/sdk is installed for type
  * parity but not exercised (the SDK Client would need a paired Server, which
- * requires more wiring than Phase 1 justifies).
+ * requires more wiring than the current scope justifies).
  *
  * This is the spec-compliance gate. If these tests pass, our server speaks
  * MCP correctly. If a real client (ChatGPT, Claude) fails, the issue is

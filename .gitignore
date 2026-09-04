@@ -10,13 +10,6 @@ dist
 coverage
 .vite
 
-# Strategy notes belong outside this tree (sibling mcpmatic-private/).
-# Ignore them if they are ever copied in by mistake.
-/private/
-STRATEGY.md
-HACKATHON_STRATEGY.md
-*hackathon-strategy*
-
 # Sprint tracking; not part of the submission.
 SPRINT.md
 
@@ -27,3 +20,11 @@ SPRINT.md
 # Local agent worktrees and session state. An embedded git repo committed
 # here becomes a gitlink with no .gitmodules, which breaks a fresh clone.
 .claude/
+
+# Sibling agent worktrees. Committing one makes a gitlink with no .gitmodules,
+# which breaks a fresh clone. Same trap as .claude/.
+.worktrees/
+
+# Agent execution plans. Scaffolding for how work got done, not documentation
+# of what was built.
+docs/superpowers/
