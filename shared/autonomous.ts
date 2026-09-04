@@ -11,14 +11,16 @@ export function mergeAutonomousConsent(
 /**
  * Whether a session acts without a grant click per origin.
  *
- * Automation is the default: an absent row means on. The product is for people
- * who want an agent to get on with it, and asking permission per origin before
- * anything has happened is friction without a decision behind it.
+ * The default is **off**. After the 2026-09-04 security review split
+ * `autoGrantNew` out of `autonomous`, both flags must fail closed by default:
+ * a navigation an agent decides on for itself must not silently widen the
+ * grant set. A user who wants the agent to roam the demo catalog has to
+ * flip the consent switch.
  *
- * An explicit "0" outranks the default and survives reloads, because a human
- * who turned it off has made a choice and a default must not undo it. An
- * unrecognised value is treated as no choice at all.
+ * An explicit "1" turns it on; an explicit "0" keeps it off. An unrecognised
+ * value or an absent row is treated as no choice at all and defaults to
+ * **off** — the safe choice.
  */
 export function autonomousFromStored(value: string | null | undefined): boolean {
-  return value === "0" ? false : true;
+  return value === "1";
 }

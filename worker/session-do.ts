@@ -1443,7 +1443,10 @@ export class SessionDO extends DurableObject<Env> {
         `SELECT value FROM meta WHERE key = 'autonomous' LIMIT 1`,
       )
       .toArray()[0];
-    // Absent means on. See autonomousFromStored.
+    // Absent defaults to off — see autonomousFromStored. The 2026-09-04
+    // security review split `autoGrantNew` out of `autonomous`, and both
+    // flags fail closed by default: a user who wants the agent to roam the
+    // catalog has to flip the consent switch.
     return autonomousFromStored(row?.value);
   }
 
