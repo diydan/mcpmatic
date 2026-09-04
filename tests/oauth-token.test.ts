@@ -1,9 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-
-import { handleToken } from "../worker/oauth/token";
-import type { AccessToken, AuthCode, OAuthClient } from "../worker/oauth/types";
-
 /**
+ * @vitest-environment node
+ *
+ * Tests for `handleToken` (POST /oauth/token) — RFC 6749 §4.1.3 + §6.
+ *
  * `handleToken` reaches into four surfaces:
  *   - OAUTH_CLIENT.getByName(clientId).fetch("/get") for client auth.
  *   - OAUTH_CODE.getByName(code).fetch("/consume", POST) for the single-use
@@ -13,8 +12,18 @@ import type { AccessToken, AuthCode, OAuthClient } from "../worker/oauth/types";
  *     pass/fail without depending on the PKCE digest.
  *
  * Tests build an env shim with a `Map`-backed KV, vitest mocks for the DO
- * fetches, and `vi.mock("../worker/oauth/pkce")` for the verifier.
+ * fetches, and `vi.spyOn(..., "verifyPkce")` for the verifier.
+ *
+ * DSRV-L1: client_secret is NEVER persisted on `OAuthClient`. The shim's
+ * `clients` map carries `clientSecretHash` (a real salted SHA-256 of the
+ * plaintext + the clientId), matching `register.ts`. Tests POST the
+ * plaintext to `/oauth/token` per RFC 6749 §2.3.1.
  */
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+import { handleToken } from "../worker/oauth/token";
+import { hashSecret } from "../worker/oauth/secret";
+import type { AccessToken, AuthCode, OAuthClient } from "../worker/oauth/types";
 
 type FetchMock = ReturnType<typeof vi.fn>;
 
@@ -32,21 +41,13 @@ interface EnvShim {
   };
 }
 
-const CLIENT: OAuthClient = {
-  clientId: "client-abc",
-  clientSecret: "secret-xyz",
-  redirectUris: ["https://example.com/cb"],
-  clientName: "test client",
-  createdAt: 1700000000000,
-};
-
-const OTHER_CLIENT: OAuthClient = {
-  clientId: "other-client",
-  clientSecret: "other-secret",
-  redirectUris: ["https://other.example/cb"],
-  clientName: "other client",
-  createdAt: 1700000000000,
-};
+// Plaintext + ids for the two canonical test clients. The shim's persisted
+// `OAuthClient` is built fresh per test in `beforeEach` so its hash matches
+// the real production code path.
+const CLIENT_ID = "client-abc";
+const CLIENT_SECRET = "secret-xyz";
+const OTHER_CLIENT_ID = "other-client";
+const OTHER_CLIENT_SECRET = "other-secret";
 
 const REDIRECT_URI = "https://example.com/cb";
 // RFC 7636 §4.6 KAT — matches the verifier used for tests.
@@ -57,10 +58,34 @@ const AUTH_CODE_STRING = "auth-code-xyz";
 
 const BASE64URL_RE = /^[A-Za-z0-9_\-]{43}$/;
 
-function authCodeFixture(overrides: Partial<AuthCode> = {}): AuthCode {
+/**
+ * Build a fully-formed `OAuthClient` whose `clientSecretHash` is a real
+ * salted SHA-256 of the plaintext under `salt = clientId` — the same
+ * scheme `register.ts` uses. `salt = clientId` lets us re-derive the
+ * exact same digest at verify time without storing the salt separately.
+ */
+async function buildClient(
+  clientId: string,
+  secret: string,
+  overrides: Partial<OAuthClient> = {},
+): Promise<OAuthClient> {
+  return {
+    clientId,
+    clientSecretHash: await hashSecret(secret, clientId),
+    redirectUris: ["https://example.com/cb"],
+    clientName: "test client",
+    createdAt: 1700000000000,
+    ...overrides,
+  };
+}
+
+function authCodeFixture(
+  clientId: string = CLIENT_ID,
+  overrides: Partial<AuthCode> = {},
+): AuthCode {
   return {
     code: AUTH_CODE_STRING,
-    clientId: CLIENT.clientId,
+    clientId,
     userSessionToken: SESSION_TOKEN,
     redirectUri: REDIRECT_URI,
     codeChallenge: CODE_CHALLENGE,
@@ -72,9 +97,7 @@ function authCodeFixture(overrides: Partial<AuthCode> = {}): AuthCode {
   };
 }
 
-function makeEnv(
-  initialClients: Record<string, OAuthClient> = { [CLIENT.clientId]: CLIENT },
-): EnvShim {
+function makeEnv(initialClients: Record<string, OAuthClient> = {}): EnvShim {
   // Track the most-recently-requested id from each DO so the fetch mock
   // can resolve the right client/code without us threading `name` into the
   // fetch shape (which is a Request and discards the `name` argument).
@@ -166,9 +189,28 @@ function tokenReq(params: Record<string, string>): Request {
 describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
   let shim: EnvShim;
   let pkceMock: ReturnType<typeof vi.spyOn>;
+  let clientFixture: OAuthClient;
+  let otherClientFixture: OAuthClient;
 
   beforeEach(async () => {
-    shim = makeEnv();
+    // Build the fixtures with REAL salted SHA-256 hashes so the verify
+    // path in `handleToken` runs through `verifySecret` against a hash
+    // a real `register.ts` call would have produced.
+    clientFixture = await buildClient(CLIENT_ID, CLIENT_SECRET);
+    otherClientFixture = await buildClient(
+      OTHER_CLIENT_ID,
+      OTHER_CLIENT_SECRET,
+      {
+        clientId: OTHER_CLIENT_ID,
+        redirectUris: ["https://other.example/cb"],
+        clientName: "other client",
+      },
+    );
+
+    shim = makeEnv({
+      [clientFixture.clientId]: clientFixture,
+    });
+
     // Default: PKCE verifier matches the challenge. The PKCE module is the
     // real implementation; individual tests can override per-case.
     const pkce = await import("../worker/oauth/pkce");
@@ -198,8 +240,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: code.code,
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -241,12 +283,19 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
     // Stored access token payload is well-formed.
     const storedToken = JSON.parse(tokenPut[1] as string) as AccessToken;
     expect(storedToken.token).toBe(body.access_token);
-    expect(storedToken.clientId).toBe(CLIENT.clientId);
+    expect(storedToken.clientId).toBe(clientFixture.clientId);
     expect(storedToken.userSessionToken).toBe(SESSION_TOKEN);
     expect(storedToken.scope).toBe("mcp:tools");
     expect(storedToken.refreshToken).toBe(body.refresh_token);
     expect(storedToken.expiresAt).toBeGreaterThan(Date.now());
     expect(storedToken.expiresAt).toBeLessThanOrEqual(Date.now() + 3600 * 1000 + 50);
+
+    // DSRV-L1: persisted hash equals a real salted SHA-256 of (plaintext,
+    // clientId). The shim stored exactly what `register.ts` would store.
+    expect(clientFixture.clientSecretHash).toBe(
+      await hashSecret(CLIENT_SECRET, clientFixture.clientId),
+    );
+    expect(clientFixture.clientSecretHash.startsWith("sha256:")).toBe(true);
   });
 
   it("wrong client_secret → 401 invalid_client; code DO consume NOT called; KV NOT touched", async () => {
@@ -256,7 +305,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: AUTH_CODE_STRING,
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
-        client_id: CLIENT.clientId,
+        client_id: clientFixture.clientId,
         client_secret: "wrong-secret",
       }),
       shim.env,
@@ -310,8 +359,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: code.code,
         redirect_uri: REDIRECT_URI,
         code_verifier: "totally-wrong-verifier-that-is-the-right-shape-aaaaaaaaaa",
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -337,8 +386,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: "already-used-code",
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -360,8 +409,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: code.code,
         redirect_uri: "https://attacker.example/cb",
         code_verifier: CODE_VERIFIER,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -378,8 +427,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         grant_type: "authorization_code",
         code: AUTH_CODE_STRING,
         redirect_uri: REDIRECT_URI,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -401,8 +450,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         grant_type: "authorization_code",
         code: AUTH_CODE_STRING,
         code_verifier: CODE_VERIFIER,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -420,8 +469,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         grant_type: "authorization_code",
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -439,8 +488,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         grant_type: "password",
         username: "alice",
         password: "hunter2",
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -467,7 +516,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
   it("clientId on the code does not match the authenticated client → 400 invalid_grant", async () => {
     // The DO hands us an AuthCode bound to a DIFFERENT client — the
     // authenticated client must not be able to exchange it.
-    const code = authCodeFixture({ clientId: "some-other-client" });
+    const code = authCodeFixture("some-other-client");
     shim.codeFetch.mockResolvedValueOnce(Response.json(code));
 
     const res = await handleToken(
@@ -476,8 +525,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: code.code,
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -496,7 +545,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
     const oldRt = "old-refresh-token-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
     const oldTok: AccessToken = {
       token: "old-access-token-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-      clientId: CLIENT.clientId,
+      clientId: clientFixture.clientId,
       userSessionToken: SESSION_TOKEN,
       scope: "mcp:tools",
       expiresAt: Date.now() + 60 * 1000,
@@ -508,8 +557,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
       tokenReq({
         grant_type: "refresh_token",
         refresh_token: oldRt,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -548,7 +597,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
     const newStored = JSON.parse(
       shim.kv.store.get(`token:${body.access_token}`)!,
     ) as AccessToken;
-    expect(newStored.clientId).toBe(CLIENT.clientId);
+    expect(newStored.clientId).toBe(clientFixture.clientId);
     expect(newStored.userSessionToken).toBe(SESSION_TOKEN);
     expect(newStored.scope).toBe("mcp:tools");
     expect(newStored.refreshToken).toBe(body.refresh_token);
@@ -559,8 +608,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
       tokenReq({
         grant_type: "refresh_token",
         refresh_token: "never-issued-token",
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -580,8 +629,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
       tokenReq({
         grant_type: "refresh_token",
         refresh_token: rt,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -597,7 +646,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
     const rt = "rt-issued-to-other-client-aaaaaaaaaaaaaaaaaaaaaaaaa";
     const otherTok: AccessToken = {
       token: "access-issued-to-other-client-bbbbbbbbbbbbbbbbbbbbb",
-      clientId: OTHER_CLIENT.clientId,
+      clientId: otherClientFixture.clientId,
       userSessionToken: SESSION_TOKEN,
       scope: "mcp:tools",
       expiresAt: Date.now() + 60 * 1000,
@@ -609,8 +658,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
       tokenReq({
         grant_type: "refresh_token",
         refresh_token: rt,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -629,8 +678,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
     const res = await handleToken(
       tokenReq({
         grant_type: "refresh_token",
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -655,8 +704,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: code.code,
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -669,8 +718,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
     const res = await handleToken(
       tokenReq({
         grant_type: "password",
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );
@@ -686,7 +735,7 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: AUTH_CODE_STRING,
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
-        client_id: CLIENT.clientId,
+        client_id: clientFixture.clientId,
         client_secret: "wrong",
       }),
       shim.env,
@@ -714,8 +763,8 @@ describe("handleToken (POST /oauth/token) — RFC 6749 §4.1.3 + §6", () => {
         code: AUTH_CODE_STRING,
         redirect_uri: REDIRECT_URI,
         code_verifier: CODE_VERIFIER,
-        client_id: CLIENT.clientId,
-        client_secret: CLIENT.clientSecret,
+        client_id: clientFixture.clientId,
+        client_secret: CLIENT_SECRET,
       }),
       shim.env,
     );

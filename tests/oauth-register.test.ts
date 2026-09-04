@@ -16,6 +16,7 @@ vi.mock("../worker/doh-resolve4", () => ({
 }));
 
 import { handleRegister } from "../worker/oauth/register";
+import { hashSecret } from "../worker/oauth/secret";
 import { isPrivateUrl } from "../worker/is-private-url";
 
 type FetchMock = ReturnType<typeof vi.fn>;
@@ -63,7 +64,7 @@ describe("handleRegister (POST /oauth/register) — RFC 7591 dynamic client regi
     vi.mocked(isPrivateUrl).mockResolvedValue(false);
   });
 
-  it("happy path: 201 with clientId (UUID), clientSecret (base64url), redirectUris, clientName='unnamed'", async () => {
+  it("happy path: 201 with clientId (UUID), clientSecret (base64url), redirectUris, clientName='unnamed', and NO clientSecretHash leak", async () => {
     const res = await handleRegister(
       req({ redirect_uris: ["https://example.com/cb"] }),
       env,
@@ -81,8 +82,13 @@ describe("handleRegister (POST /oauth/register) — RFC 7591 dynamic client regi
     expect(body.clientName).toBe("unnamed");
     expect(typeof body.createdAt).toBe("number");
 
+    // DSRV-L1 / T6-2: the persisted hash MUST NOT be echoed back. The
+    // registrant only needs the id + the plaintext secret + the metadata.
+    expect(body.clientSecretHash).toBeUndefined();
+
     // DO was called once with the canonical stub URL and the serialized
-    // client as JSON body.
+    // client as JSON body. The persisted client carries `clientSecretHash`
+    // (the salted SHA-256), not the plaintext secret.
     expect(getByName).toHaveBeenCalledTimes(1);
     expect(getByName).toHaveBeenCalledWith(body.clientId);
     expect(doFetch).toHaveBeenCalledTimes(1);
@@ -92,13 +98,19 @@ describe("handleRegister (POST /oauth/register) — RFC 7591 dynamic client regi
     ];
     expect(url).toBe("https://stub/register");
     expect(init?.method).toBe("POST");
-    expect(JSON.parse(init?.body as string)).toEqual({
-      clientId: body.clientId,
-      clientSecret: body.clientSecret,
-      redirectUris: ["https://example.com/cb"],
-      clientName: "unnamed",
-      createdAt: body.createdAt,
-    });
+    const persisted = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(persisted.clientId).toBe(body.clientId);
+    // Persisted shape: clientSecretHash, no plaintext clientSecret.
+    expect(persisted.clientSecret).toBeUndefined();
+    expect(typeof persisted.clientSecretHash).toBe("string");
+    expect((persisted.clientSecretHash as string).startsWith("sha256:")).toBe(true);
+    // Salt = clientId per DSRV-L1; verify the hash actually matches.
+    expect(persisted.clientSecretHash).toBe(
+      await hashSecret(body.clientSecret as string, body.clientId as string),
+    );
+    expect(persisted.redirectUris).toEqual(["https://example.com/cb"]);
+    expect(persisted.clientName).toBe("unnamed");
+    expect(persisted.createdAt).toBe(body.createdAt);
 
     // isPrivateUrl was consulted for every redirect_uri.
     expect(vi.mocked(isPrivateUrl)).toHaveBeenCalledTimes(1);

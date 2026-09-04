@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { OAuthClientDO } from "../worker/oauth/client-do";
+import { hashSecret } from "../worker/oauth/secret";
 import type { OAuthClient } from "../worker/oauth/types";
 
 /**
@@ -60,7 +61,7 @@ function makeFakeState(initial: Record<string, unknown> = {}) {
 function clientFixture(overrides: Partial<OAuthClient> = {}): OAuthClient {
   return {
     clientId: "client-abc",
-    clientSecret: "secret-xyz",
+    clientSecretHash: "sha256:placeholder-hash-here-00000000000000000000000000000000000000000000000000",
     redirectUris: ["https://example.com/callback"],
     clientName: "test client",
     createdAt: 1700000000000,
@@ -103,10 +104,13 @@ describe("OAuthClientDO", () => {
   });
 
   it("register is idempotent — second call overwrites the first", async () => {
-    const first = clientFixture({ clientId: "v1", clientSecret: "s1" });
+    const first = clientFixture({
+      clientId: "v1",
+      clientSecretHash: await hashSecret("s1", "v1"),
+    });
     const second = clientFixture({
       clientId: "v2",
-      clientSecret: "s2",
+      clientSecretHash: await hashSecret("s2", "v2"),
       createdAt: 1800000000000,
     });
 

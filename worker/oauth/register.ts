@@ -4,7 +4,9 @@
  * POST /oauth/register accepts `{redirect_uris, client_name?}` and creates a
  * new client: a fresh UUID `client_id` and a server-generated 256-bit
  * `client_secret` (base64url-no-pad). The client is persisted to the
- * OAuthClientDO keyed by its `client_id`.
+ * OAuthClientDO keyed by its `client_id` with the secret STORED AS A
+ * SALTED SHA-256 HASH — the plaintext is never persisted (DSRV-L1), and
+ * the hash is verified in constant time on token exchange (DSRV-L2).
  *
  * SSRF guard: every `redirect_uri` is run through `isPrivateUrl`, which
  * fail-closes on private IP literals, on resolver errors, and on any
@@ -12,15 +14,20 @@
  * guard the navigation tools use (`session-do.ts`); a private URL must
  * never end up as a redirect target.
  *
- * The client_secret is echoed back in the response. Per RFC 7591 §3.2.1
- * the server MAY include `client_secret` in the response and the spec only
- * forbids it for public clients — for Phase 1.5 all registered clients
- * are confidential. This keeps the test path trivial.
+ * The plaintext `client_secret` is echoed back ONCE in the response. Per
+ * RFC 7591 §3.2.1 the server MAY include `client_secret` in the response
+ * and the spec only forbids it for public clients — for Phase 1.5 all
+ * registered clients are confidential. The `clientSecretHash` is
+ * deliberately STRIPPED from the response (T6-2 ruling): the API must
+ * not echo the persisted secret, even as a hash, so a careless client
+ * that round-trips the response into another storage tier does not
+ * leak it a second time.
  */
 import { isPrivateUrl } from "../is-private-url";
 import { makeResolve4 } from "../doh-resolve4";
 import type { OAuthClient } from "./types";
 import { base64urlNoPad } from "./encoding";
+import { hashSecret } from "./secret";
 
 /** Stub origin for the OAuthClientDO fetch — the DO ignores the URL. */
 const DO_STUB_ORIGIN = "https://stub";
@@ -81,9 +88,13 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 
   const clientId = crypto.randomUUID();
   const clientSecret = base64urlNoPad(crypto.getRandomValues(new Uint8Array(32)));
+  // The salt for DSRV-L1 is the clientId itself — already unique (UUID v4)
+  // and recorded alongside the hash on registration, so verification at
+  // /oauth/token can re-derive the same digest without storing the salt.
+  const clientSecretHash = await hashSecret(clientSecret, clientId);
   const client: OAuthClient = {
     clientId,
-    clientSecret,
+    clientSecretHash,
     redirectUris: body.redirect_uris as string[],
     clientName: typeof body.client_name === "string" ? body.client_name : "unnamed",
     createdAt: Date.now(),
@@ -97,5 +108,14 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
     body: JSON.stringify(client),
   });
 
-  return Response.json(client, { status: 201 });
+  // Strip the persisted hash from the response. The OAuthClient shape that
+  // landed in the DO carries `clientSecretHash`; the registrant only needs
+  // the id, the redirect URIs, the name, the createdAt, and the plaintext
+  // `clientSecret` (echoed exactly once for confidential clients per RFC
+  // 7591 §3.2.1).
+  const { clientSecretHash: _omit, ...clientPublic } = client;
+  return Response.json(
+    { ...clientPublic, clientSecret },
+    { status: 201 },
+  );
 }

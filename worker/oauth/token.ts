@@ -36,6 +36,7 @@
 import { FACADE_HEADERS } from "../facade-headers";
 import { base64urlNoPad } from "./encoding";
 import { verifyPkce } from "./pkce";
+import { verifySecret } from "./secret";
 import type { AccessToken, AuthCode, OAuthClient } from "./types";
 
 /** Stub origin for the OAuth DO fetch — the DOs ignore the URL. */
@@ -88,13 +89,12 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
  * Look up the client by id and verify the secret. Returns the client JSON on
  * success, null on any failure (unknown id or wrong secret).
  *
- * Note: `client.clientSecret !== clientSecret` is a plain string compare
- * (Phase 1.5 scope). A timing-safe compare would be better — a network
- * attacker with many attempts could otherwise observe the secret match
- * boundary — but the auth surface for token minting is small (the client
- * already authenticated once at /oauth/register and this is the only point
- * where its secret is checked again), so the impact is bounded. Flagged
- * for a future hardening pass.
+ * The persisted `OAuthClient` carries the secret as a salted SHA-256 hash
+ * (`sha256:<hex>`, salt = the clientId). We re-derive the hash with the
+ * same salt and constant-time compare against the stored value — a network
+ * attacker who can repeatedly POST to /oauth/token cannot observe a
+ * per-byte timing leak. DSRV-L1 (no plaintext at rest) and DSRV-L2
+ * (constant-time compare on the hash) both land here.
  */
 async function authenticateClient(
   clientId: string,
@@ -106,8 +106,10 @@ async function authenticateClient(
   const clientRes = await clientStub.fetch(`${DO_STUB_ORIGIN}/get`);
   if (clientRes.status !== 200) return null;
   const client = (await clientRes.json()) as OAuthClient;
-  if (client.clientSecret !== clientSecret) return null;
-  return client;
+  // Salt is the clientId — same value as at registration time. The constant-
+  // time compare is inside `verifySecret`.
+  const ok = await verifySecret(clientSecret, client.clientSecretHash, clientId);
+  return ok ? client : null;
 }
 
 async function exchangeCode(

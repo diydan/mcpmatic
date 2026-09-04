@@ -134,7 +134,8 @@ function postReq(params: Record<string, string>): Request {
 
 const CLIENT: OAuthClient = {
   clientId: "client-abc",
-  clientSecret: "secret-xyz",
+  // Placeholder hash — authorize never reads the secret.
+  clientSecretHash: "sha256:placeholder-hash-here-00000000000000000000000000000000000000000000000000",
   redirectUris: ["https://example.com/cb", "https://example.com/cb?x=1"],
   clientName: "test client",
   createdAt: 1700000000000,

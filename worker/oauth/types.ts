@@ -1,6 +1,7 @@
 export type OAuthClient = {
   clientId: string;
-  clientSecret: string;
+  /** Salted SHA-256 of the plaintext `client_secret`, formatted `sha256:<hex>`. */
+  clientSecretHash: string;
   redirectUris: string[];
   clientName: string;
   createdAt: number;
