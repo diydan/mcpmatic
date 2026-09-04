@@ -20,7 +20,7 @@
  *
  * Both A and AAAA are collected. Resolving only A missed the dual-stack
  * rebind case — a public A record beside a private AAAA — and
- * PRIVATE_IP_PATTERNS already covers the IPv6 forms.
+ * `parseIp` (see `shared/net.ts`) covers the IPv6 forms.
  *
  * It takes a `fetchFn` rather than the worker `Env` so it can be unit-tested
  * without a Workers runtime.
@@ -97,11 +97,10 @@ async function queryDoH(
   const wantType = recordType === "A" ? DNS_TYPE_A : DNS_TYPE_AAAA;
 
   // Only address records of the requested type. CNAME (5) and any other
-  // record type are filtered out — isPrivateUrl is regex-based and would
-  // not match a non-IP string, which would let the URL through.
+  // record type are filtered out — isPrivateUrl uses parseIp and rejects
+  // anything that isn't a parseable IPv4/IPv6 literal.
   // `.trim()` defends against a (theoretical) malformed data field with
-  // leading/trailing whitespace that would slip the prefix-anchored
-  // PRIVATE_IP_PATTERNS regex check.
+  // leading/trailing whitespace that would slip the parse.
   return body.Answer
     .filter(
       (a): a is DoHAnswer & { data: string } =>
