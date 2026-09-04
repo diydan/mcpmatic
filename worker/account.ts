@@ -10,6 +10,7 @@
  * behind it is still a working session, which is what keeps "no login, no key,
  * no install" true for anyone who does not want one.
  */
+import { isSessionToken } from "../shared/session-token";
 
 export type ClaimDecision =
   | { ok: true }
@@ -44,11 +45,13 @@ export function claimDecision(
  * is what makes it survive cleared storage and reach a second device; until
  * then, unguessability is the whole defence, so the length is load-bearing.
  *
- * Never normalise the case: a DO name is compared verbatim, so folding it
- * would make two ids resolve to one account.
+ * Account ids share the 64-hex-char shape with session tokens, so the
+ * recognition regex is the same single source of truth. A DO name is compared
+ * verbatim, so a token shape that folded case would make two ids resolve to
+ * one account — `isSessionToken` is intentionally case-insensitive on hex,
+ * and the storage layer is what stops two different hex strings from naming
+ * the same Durable Object.
  */
-const ACCOUNT_ID_RE = /^[A-Fa-f0-9]{64}$/;
-
 export function isAccountId(value: unknown): value is string {
-  return typeof value === "string" && ACCOUNT_ID_RE.test(value);
+  return isSessionToken(value);
 }

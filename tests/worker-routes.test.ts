@@ -85,6 +85,7 @@ import { handleRegister } from "../worker/oauth/register";
 import { handleAuthorize } from "../worker/oauth/authorize";
 import { handleToken } from "../worker/oauth/token";
 import { handleMcp } from "../worker/mcp/server";
+import { SESSION_TOKEN_RE } from "../shared/session-token";
 import worker from "../worker/index";
 
 // ------------------------------------------------------------------------
@@ -199,7 +200,7 @@ describe("worker/index.ts — route wiring", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { sessionToken: string; url: string };
-    expect(body.sessionToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(body.sessionToken).toMatch(SESSION_TOKEN_RE);
     expect(body.url).toBe(`https://worker.local/s/${body.sessionToken}`);
     // /sessions MUST plant the sentinel row by calling initSession on the
     // SESSION DO — without it the OAuth authorize handler's /check would

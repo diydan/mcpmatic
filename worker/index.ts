@@ -9,6 +9,7 @@ import { makeResolve4 } from "./doh-resolve4";
 import { isAccountId } from "./account";
 import { canonicalOrigin } from "../shared/origin";
 import { MANIFESTS } from "./manifests";
+import { SESSION_TOKEN_SOURCE } from "../shared/session-token";
 
 export { SessionDO, OAuthClientDO, OAuthCodeDO, AccountDO, SiteDO };
 
@@ -21,14 +22,14 @@ export default {
       return createSession(request, env);
     }
 
-    const sessionMatch = path.match(/^\/sessions\/([A-Fa-f0-9]{64})$/);
+    const sessionMatch = path.match(`^/sessions/(${SESSION_TOKEN_SOURCE})$`);
     if (sessionMatch && request.method === "DELETE") {
       const stub = env.SESSION.getByName(sessionMatch[1]);
       await stub.destroy();
       return json({ ok: true });
     }
 
-    const consentMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/consent$/);
+    const consentMatch = path.match(`^/s/(${SESSION_TOKEN_SOURCE})/consent$`);
     // Grant and revoke share one expiry rule: a session past its TTL answers
     // 410, the same status the bridge returns. The DO throws; the worker
     // translates, because status codes are a worker concern.
@@ -90,7 +91,7 @@ export default {
     // Read-only. The durable log the account holds, or the session's own rows
     // when it has no account. Rows are {origin, tool, fieldNames, ts} — there
     // is no value column to expose.
-    const auditMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/audit$/);
+    const auditMatch = path.match(`^/s/(${SESSION_TOKEN_SOURCE})/audit$`);
     if (auditMatch && request.method === "GET") {
       const stub = env.SESSION.getByName(auditMatch[1]);
       return json({ rows: await stub.listHistory() });
@@ -108,7 +109,7 @@ export default {
     // 400 — the response is honest about the gap rather than 200-ing an
     // unverified claim, so a token that should have been step-up-bound
     // surfaces in the console as an error, not a quiet success.
-    const accountMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/account$/);
+    const accountMatch = path.match(`^/s/(${SESSION_TOKEN_SOURCE})/account$`);
     if (accountMatch && request.method === "POST") {
       let body: { accountId?: unknown; stepUpToken?: unknown };
       try {
@@ -173,7 +174,7 @@ export default {
       return new Response("not found", { status: 404, headers: FACADE_HEADERS });
     }
 
-    const bridgeMatch = path.match(/^\/s\/([A-Fa-f0-9]{64})\/bridge$/);
+    const bridgeMatch = path.match(`^/s/(${SESSION_TOKEN_SOURCE})/bridge$`);
     if (bridgeMatch) {
       if (request.headers.get("Upgrade") !== "websocket") {
         return new Response("expected websocket", {

@@ -315,8 +315,17 @@ export class SessionDO extends DurableObject<Env> {
    * authenticator may be attached to, and never returns it to a client. That
    * is the whole point — registration must prove possession of the session,
    * not merely knowledge of an account id.
+   *
+   * Honours the session TTL: every other entry point (grantConsent,
+   * revokeConsent, listConsent, the WebSocket accept bridge) refuses an
+   * expired session, and the route that calls this had to do the same —
+   * before this guard a token past its TTL could mint a durable passkey
+   * bound to whatever account it had claimed.
    */
   async accountForPasskey(): Promise<{ accountId: string | null }> {
+    if (this.expired()) {
+      throw new Error("session expired");
+    }
     return { accountId: this.accountId() };
   }
 

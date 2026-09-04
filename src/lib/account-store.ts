@@ -1,5 +1,7 @@
 // Storage keys keep the old prefix on purpose: renaming this one orphans
 // every account that already holds a grant list, and the key is never shown.
+import { isSessionToken } from "../../shared/session-token";
+
 const KEY = "mcpmatic.accountId";
 
 type MinimalStorage = {
@@ -8,7 +10,9 @@ type MinimalStorage = {
 };
 
 function isWellFormed(value: string | null): value is string {
-  return typeof value === "string" && /^[A-Fa-f0-9]{64}$/.test(value);
+  // Account ids share the 64-hex-char shape with session tokens; the
+  // single regex source of truth is `shared/session-token.ts`.
+  return value !== null && isSessionToken(value);
 }
 
 /**

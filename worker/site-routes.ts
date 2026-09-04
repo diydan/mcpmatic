@@ -1,6 +1,7 @@
 import { isPrivateUrl } from "./is-private-url";
 import { makeResolve4 } from "./doh-resolve4";
 import { normaliseOrigin } from "../shared/origin";
+import { SESSION_TOKEN_SOURCE } from "../shared/session-token";
 
 /** Where an owner publishes the token that proves they control the origin. */
 export const WELL_KNOWN_PATH = "/.well-known/browsermatic.txt";
@@ -101,6 +102,6 @@ async function readOrigin(request: Request): Promise<string | null> {
 
 function bearer(request: Request): string | null {
   const header = request.headers.get("authorization") ?? "";
-  const match = header.match(/^Bearer ([A-Fa-f0-9]{64})$/);
+  const match = header.match(`^Bearer (${SESSION_TOKEN_SOURCE})$`);
   return match ? match[1] : null;
 }

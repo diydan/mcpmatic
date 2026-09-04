@@ -54,6 +54,7 @@ vi.mock("../worker/site-do", () => ({ SiteDO: class SiteDO {} }));
 import { isPrivateUrl } from "../worker/is-private-url";
 import { SessionDO } from "../worker/session-do";
 import worker from "../worker/index";
+import { SESSION_TOKEN_RE } from "../shared/session-token";
 
 // ------------------------------------------------------------------------
 
@@ -101,7 +102,7 @@ describe("POST /sessions — back-compat (no body)", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { sessionToken: string; url: string };
-    expect(body.sessionToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(body.sessionToken).toMatch(SESSION_TOKEN_RE);
     expect(body.url).toBe(`https://worker.local/s/${body.sessionToken}`);
     // Back-compat: a no-body POST must NOT pass an origin. Old clients
     // (Home.tsx today) rely on this — no consent gets seeded.
@@ -176,7 +177,7 @@ describe("POST /sessions — origin seed (happy path)", () => {
       url: string;
       origin: string | null;
     };
-    expect(body.sessionToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(body.sessionToken).toMatch(SESSION_TOKEN_RE);
     expect(body.url).toBe(`https://worker.local/s/${body.sessionToken}`);
     expect(body.origin).toBe("https://example.com");
     // Origin was forwarded to the DO so the seed-consent path runs.

@@ -32,16 +32,15 @@
  * authenticate against a token whose payload says it has expired.
  */
 import type { AccessToken } from "./types";
+import { isSessionToken } from "../../shared/session-token";
 
 /** RFC 6749 §4.2.2: 256-bit random access tokens encoded as 43-char base64url (no padding). */
 const OAUTH_TOKEN_RE = /^[A-Za-z0-9\-_]{43}$/;
-/** Phase 1 session tokens are 64 hex chars. Case-insensitive — input is opaque. */
-const SESSION_TOKEN_RE = /^[a-f0-9]{64}$/i;
 
 export async function resolveMcpToken(token: string, env: Env): Promise<string | null> {
   // Branch 1 — Phase 1 session token. No I/O. The session token is the
   // bearer; SessionDO.getByName(token) is what /mcp will hand it to next.
-  if (SESSION_TOKEN_RE.test(token)) return token;
+  if (isSessionToken(token)) return token;
 
   // Branch 2 — OAuth access token shape. KV is the source of truth.
   if (OAUTH_TOKEN_RE.test(token)) {

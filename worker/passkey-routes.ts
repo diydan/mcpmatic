@@ -14,10 +14,9 @@ import {
   toStoredCredential,
 } from "./passkey";
 import { mintStepUp, putChallenge, takeChallenge } from "./passkey-challenge";
+import { isSessionToken } from "../shared/session-token";
 
 const RP_NAME = "BrowserMatic";
-/** Same shape the worker's own routes match on. */
-const SESSION_TOKEN_RE = /^[A-Fa-f0-9]{64}$/;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -59,12 +58,23 @@ export async function handlePasskey(
     // possession of the same credential the rest of the product rests on, and
     // knowing the account id alone is not enough.
     const body = (await readJson(request)) as { sessionToken?: unknown };
-    if (typeof body?.sessionToken !== "string" || !SESSION_TOKEN_RE.test(body.sessionToken)) {
+    if (!isSessionToken(body?.sessionToken)) {
       return json({ error: "invalid sessionToken" }, 400);
     }
-    const { accountId } = await env.SESSION.getByName(
-      body.sessionToken,
-    ).accountForPasskey();
+    let accountId: string | null;
+    try {
+      // SessionDO.accountForPasskey throws on an expired session; translate
+      // to the same 410 the consent routes answer, so a stale token cannot
+      // mint a durable passkey bound to whatever account it had claimed.
+      ({ accountId } = await env.SESSION.getByName(
+        body.sessionToken,
+      ).accountForPasskey());
+    } catch (err) {
+      if (err instanceof Error && err.message === "session expired") {
+        return json({ ok: false, error: "session expired" }, 410);
+      }
+      throw err;
+    }
     if (!isAccountId(accountId)) {
       return json({ error: "session has no account" }, 400);
     }
@@ -181,8 +191,7 @@ export async function handlePasskey(
       accountId?: unknown;
     };
     if (
-      typeof body?.sessionToken !== "string" ||
-      !SESSION_TOKEN_RE.test(body.sessionToken) ||
+      !isSessionToken(body?.sessionToken) ||
       typeof body?.accountId !== "string" ||
       !isAccountId(body.accountId)
     ) {
@@ -221,8 +230,7 @@ export async function handlePasskey(
     const accountId = body?.accountId;
     const response = body?.response;
     if (
-      typeof sessionToken !== "string" ||
-      !SESSION_TOKEN_RE.test(sessionToken) ||
+      !isSessionToken(sessionToken) ||
       typeof accountId !== "string" ||
       !isAccountId(accountId)
     ) {

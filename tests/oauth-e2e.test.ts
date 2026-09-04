@@ -47,6 +47,7 @@ import { handleRegister } from "../worker/oauth/register";
 import { handleAuthorize } from "../worker/oauth/authorize";
 import { handleToken } from "../worker/oauth/token";
 import { handleMcp } from "../worker/mcp/server";
+import { SESSION_TOKEN_RE } from "../shared/session-token";
 import type { OAuthClient, AuthCode, AccessToken } from "../worker/oauth/types";
 
 // RFC 7636 §4.6 KAT — verifier + its S256 challenge. Used here so the real
@@ -237,7 +238,7 @@ describe("OAuth end-to-end flow (in-process integration)", () => {
     // stub.initSession(token) so the OAuth authorize handler's /check
     // succeeds for it. We replicate that here.
     const sessionToken = await mintSession(shim);
-    expect(sessionToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(sessionToken).toMatch(SESSION_TOKEN_RE);
 
     // ---- 1. Register the OAuth client --------------------------------
     const registerRes = await handleRegister(
