@@ -14,6 +14,10 @@ into your assistant, origin-qualified, across as many sites as you like.
 
 **Live:** <https://browsermatic.dev> — no login, no key, no install.
 
+![The console: an AI assistant on the left, the remote browser it is driving on
+the right, and you able to take the keyboard at any
+moment.](docs/images/console.png)
+
 ## Try it in a minute
 
 1. Open the live URL, type `allbirds.com`, press Go.
@@ -53,9 +57,10 @@ waiting for the other to finish.
 
 ## What is true
 
-Do not write "your data never leaves your device." Injected fields travel
-page → Worker → Durable Object → the target origin. A store legitimately learns
-a shipping address when checkout is filled.
+It would be easy to say "your data never leaves your device." It would be
+false. Injected fields travel page → Worker → Durable Object → the target
+origin, and a store legitimately learns a shipping address when checkout is
+filled. What follows is what actually holds.
 
 - The profile is never uploaded wholesale. Only declared paths resolve.
 - Values are never logged. The audit table has no value column.
@@ -65,10 +70,6 @@ a shipping address when checkout is filled.
   `needs-console` rather than filling blanks and reporting success. An agent
   holding the same token cannot answer for you — the façade is never sent the
   request.
-- `document.modelContext` is behind a Chrome origin trial and the remote
-  browser lacks it. We install the API before the page's own scripts run, so a
-  storefront that ships WebMCP can register its own tools. **We add none of our
-  own.** Without this, a WebMCP storefront exposes nothing at all.
 - Keystrokes in the viewport cross this Worker in plaintext and are not stored.
 
 ## Why WebMCP
