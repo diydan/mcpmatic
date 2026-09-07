@@ -257,3 +257,46 @@ describe("execute refuses loudly", () => {
     );
   });
 });
+
+/**
+ * The façade half of the tool surface. It ships the same names ChatGPT sees,
+ * so its descriptions have to agree with the SYSTEM prompt exactly as the MCP
+ * spine's do — see `tool-surface.test.ts` for the worker half and for why a
+ * restrictive description silently no-ops the open-web change.
+ */
+describe("spine descriptions agree with the open-web prompt", () => {
+  /** Phrasings that make navigation conditional on a prior grant. */
+  const RESTRICTIVE: RegExp[] = [
+    /origin the user has granted/i,
+    /\ba granted origin\b/i,
+    /must (already )?be granted/i,
+    /only .{0,24}\bgranted\b/i,
+  ];
+
+  async function describeTool(name: string): Promise<string> {
+    const mc = ensureModelContext();
+    const { registration } = harness();
+    await registration.sync(new Set());
+    const tool = (await mc.getTools()).find((t) => t.name === name);
+    expect(tool, `${name} is not registered on the façade`).toBeDefined();
+    return tool!.description;
+  }
+
+  it("navigate_to does not restrict navigation to already-granted origins", async () => {
+    const description = await describeTool("navigate_to");
+    for (const pattern of RESTRICTIVE) {
+      expect(description).not.toMatch(pattern);
+    }
+  });
+
+  it("navigate_to licenses any https site", async () => {
+    const description = await describeTool("navigate_to");
+    expect(description).toMatch(/any https site/i);
+    expect(description).toMatch(/sites that already have tools/i);
+  });
+
+  it("list_available_origins is not presented as the set of visitable sites", async () => {
+    const description = await describeTool("list_available_origins");
+    expect(description).toMatch(/navigate_to reaches any https site/i);
+  });
+});

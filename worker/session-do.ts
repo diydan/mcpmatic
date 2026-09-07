@@ -993,11 +993,16 @@ export class SessionDO extends DurableObject<Env> {
     reason?: string;
   }> {
     if (name === "list_available_origins") {
+      // Not a closed list, and it must not read like one (spec §2). A model
+      // that took `known` for "the origins that exist" fell straight back into
+      // the four-site catalog and silently no-opped the open web. `note` says
+      // so in the payload itself, because that is what a model reads.
       return {
         ok: true,
         text: JSON.stringify({
           consented: this.readConsent(),
-          known: MANIFESTS.map((m) => m.origin),
+          preWired: MANIFESTS.map((m) => m.origin),
+          note: "navigate_to reaches any https site. preWired are examples that already carry tools; they are not the sites you may visit.",
         }),
       };
     }
@@ -1009,7 +1014,7 @@ export class SessionDO extends DurableObject<Env> {
         return {
           ok: true,
           text: this.env.BROWSER
-            ? "No remote browser yet. Grant an origin (or call navigate_to on a granted one) and one starts."
+            ? "No remote browser yet. Call navigate_to with any https site and one starts."
             : "No Browser Rendering binding in this environment. Tools still register; they run when a live browser can open the site.",
         };
       }
@@ -1056,7 +1061,7 @@ export class SessionDO extends DurableObject<Env> {
       if (!live?.page.evaluate) {
         return {
           ok: true,
-          text: "No remote page open yet. Call navigate_to with a granted origin first.",
+          text: "No remote page open yet. Call navigate_to with any https site first.",
         };
       }
       const found = await discoverNativeTools(
@@ -1079,7 +1084,7 @@ export class SessionDO extends DurableObject<Env> {
         // open a page. Name the thing that actually unblocks it.
         return {
           ok: true,
-          text: "No remote page open yet. Call navigate_to with a granted origin first.",
+          text: "No remote page open yet. Call navigate_to with any https site first.",
         };
       }
       if (!live.page.evaluate) {
@@ -1142,7 +1147,7 @@ export class SessionDO extends DurableObject<Env> {
       }
       const live = target ? await this.ensureBrowser() : this.live;
       if (!live) {
-        return { ok: false, text: "No remote page open yet. Grant an origin first." };
+        return { ok: false, text: "No remote page open yet. Call navigate_to first." };
       }
       if (!live.page.evaluate) {
         return { ok: false, text: `cannot reach ${parsed.name} on the remote page` };

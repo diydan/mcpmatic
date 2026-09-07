@@ -16,13 +16,14 @@ const SPINE: McpToolDescriptor[] = [
   },
   {
     name: "list_available_origins",
-    description: "Origins this session may act on, after consent.",
+    description:
+      "Origins this session has already opened, plus pre-wired examples that register tools on sight. Not the set you may visit: navigate_to reaches any https site.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "navigate_to",
     description:
-      "Navigate the remote browser to an https origin the user has granted.",
+      "Navigate the remote browser to any https site relevant to the task. Not restricted to origins already granted, or to sites that already have tools.",
     inputSchema: {
       type: "object",
       properties: {
