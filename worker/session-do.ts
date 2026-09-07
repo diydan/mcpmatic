@@ -302,6 +302,69 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /**
+   * The subset of `consent` the *model* chose, rather than the human.
+   *
+   * A second, session-scoped set rather than a tag inside the consent array:
+   * that array's shape is read by `listConsent`, `listTools`, `sendState`,
+   * `mergeAutonomousConsent` and the client, and widening it would ripple
+   * through every one of them.
+   *
+   * It exists because `grantConsent`'s `source` check is not the only route
+   * from session consent to a durable account grant. `claimAccount` hands the
+   * whole consent list to `AccountDO.claim`, which calls `grant()` on every
+   * entry — so a model-picked origin still became a permanent account grant,
+   * by a second route, which is precisely what spec §5 forbids.
+   *
+   * Cleared per origin by an explicit human grant (which upgrades it) and by a
+   * revoke. Never read outside this class.
+   */
+  private readModelPicked(): string[] {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        `SELECT value FROM meta WHERE key = 'modelPicked' LIMIT 1`,
+      )
+      .toArray()[0];
+    if (!row) return [];
+    try {
+      const parsed = JSON.parse(row.value) as unknown;
+      return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private writeModelPicked(origins: readonly string[]): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('modelPicked', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      JSON.stringify([...origins]),
+    );
+  }
+
+  /**
+   * Remember (or forget) that a consented origin was the model's pick.
+   *
+   * A human grant always wins: it drops the tag, upgrading the origin to one
+   * `claimAccount` may write durably. A model grant only tags an origin that
+   * is entering the list on this call, so a later model navigation to an
+   * origin the human already granted cannot demote it.
+   */
+  private trackConsentSource(
+    origin: string,
+    source: "model" | "user",
+    isNew: boolean,
+  ): void {
+    const picked = this.readModelPicked();
+    if (source === "user") {
+      if (!picked.includes(origin)) return;
+      this.writeModelPicked(picked.filter((o) => o !== origin));
+      return;
+    }
+    if (!isNew || picked.includes(origin)) return;
+    this.writeModelPicked([...picked, origin]);
+  }
+
+  /**
    * Public read of the consent list. Used by the GET /s/<token>/consent
    * route so the Session page can hydrate its `consented` state on mount
    * when an origin was pre-seeded via POST /sessions. Idempotent.
@@ -398,9 +461,15 @@ export class SessionDO extends DurableObject<Env> {
   ): Promise<{ ok: boolean; consent?: string[]; error?: string }> {
     const decision = claimDecision(this.accountId(), accountId);
     if (!decision.ok) return { ok: false, error: decision.reason };
+    // Only the human's grants go up. `AccountDO.claim` calls `grant()` on
+    // everything it is handed, so passing the untagged consent list wrote
+    // every origin the agent had wandered onto into the durable account —
+    // the defect `grantConsent`'s `source` check closes on its own route,
+    // arriving here by a second one (spec §5).
+    const picked = new Set(this.readModelPicked());
     await this.env.ACCOUNT.getByName(accountId).claim(
       this.sessionToken() ?? "",
-      this.readConsent(),
+      this.readConsent().filter((o) => !picked.has(o)),
     );
     this.ctx.storage.sql.exec(
       `INSERT INTO meta (key, value) VALUES ('accountId', ?)
@@ -472,6 +541,14 @@ export class SessionDO extends DurableObject<Env> {
     }
     const allowed = this.readConsent().filter((o) => o !== origin);
     this.writeConsent(allowed);
+    // The tag describes an entry in the consent list, so it goes when the
+    // entry does. Left behind it would outlive its origin and still be there
+    // if the model reached the same site again — a state the human's revoke
+    // was meant to clear.
+    const picked = this.readModelPicked();
+    if (picked.includes(origin)) {
+      this.writeModelPicked(picked.filter((o) => o !== origin));
+    }
     const accountId = this.accountId();
     if (accountId && origin) {
       this.ctx.waitUntil(
@@ -509,7 +586,13 @@ export class SessionDO extends DurableObject<Env> {
       );
     }
     const allowed = this.readConsent();
-    if (!allowed.includes(origin)) {
+    const isNew = Boolean(origin) && !allowed.includes(origin);
+    // Before the write, so "is this origin entering the list now?" is still
+    // answerable. A user grant clears the tag whether or not it is new — an
+    // explicit human grant of an origin the model reached first is exactly
+    // the upgrade-to-durable case.
+    if (origin) this.trackConsentSource(origin, source, isNew);
+    if (isNew) {
       allowed.push(origin);
       this.ctx.storage.sql.exec(
         `INSERT INTO meta (key, value) VALUES ('consent', ?)

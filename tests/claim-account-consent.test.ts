@@ -59,6 +59,8 @@ function makeSql() {
 
 const KAYAK = "https://www.kayak.com";
 const ALLBIRDS = "https://www.allbirds.com";
+/** Somewhere the agent wandered on its own. Never named by the human. */
+const WANDERED = "https://www.wandered.example";
 
 function makeDo() {
   const sql = makeSql();
@@ -107,6 +109,82 @@ describe("claimAccount", () => {
     await do_.claimAccount("acct_1");
 
     expect(claim).toHaveBeenCalledWith("k".repeat(64), [KAYAK]);
+  });
+
+  /**
+   * Spec §5. `grantConsent` already refuses to call `ACCOUNT.grant()` for a
+   * model-picked origin, but `claimAccount` handed the whole untagged consent
+   * list to `AccountDO.claim`, which grants every entry it receives — so the
+   * durable set still grew every time the agent wandered, by a second route.
+   */
+  describe("model-picked origins stay out of the account", () => {
+    it("does not push a model-picked origin up into the account", async () => {
+      const { do_, claim } = makeDo();
+      await do_.initSession("k".repeat(64), KAYAK);
+      await do_.grantConsent(WANDERED, "model");
+
+      await do_.claimAccount("acct_1");
+
+      expect(claim).toHaveBeenCalledWith("k".repeat(64), [KAYAK]);
+    });
+
+    it("still lists the model-picked origin in this session's consent", async () => {
+      // Session-scoped, not hidden: the Consent panel must still show it with
+      // its revoke button. Only the durable write is withheld.
+      const { do_ } = makeDo();
+      await do_.initSession("k".repeat(64), KAYAK);
+      await do_.grantConsent(WANDERED, "model");
+
+      const { consent } = await do_.listConsent();
+      expect(consent).toEqual([KAYAK, WANDERED]);
+    });
+
+    it("an explicit human grant upgrades the origin to durable", async () => {
+      const { do_, claim } = makeDo();
+      await do_.initSession("k".repeat(64), KAYAK);
+      await do_.grantConsent(WANDERED, "model");
+      // The user sees it in the Consent panel and grants it deliberately.
+      await do_.grantConsent(WANDERED, "user");
+
+      await do_.claimAccount("acct_1");
+
+      expect(claim).toHaveBeenCalledWith("k".repeat(64), [KAYAK, WANDERED]);
+    });
+
+    it("a later model navigation cannot demote a human-granted origin", async () => {
+      const { do_, claim } = makeDo();
+      await do_.initSession("k".repeat(64), KAYAK);
+      await do_.grantConsent(WANDERED, "user");
+      // allowOrigin short-circuits on an already-consented origin, but a
+      // direct model grant must not re-tag it either.
+      await do_.grantConsent(WANDERED, "model");
+
+      await do_.claimAccount("acct_1");
+
+      expect(claim).toHaveBeenCalledWith("k".repeat(64), [KAYAK, WANDERED]);
+    });
+
+    it("revoking clears the tag, so a later human grant goes up", async () => {
+      const { do_, claim } = makeDo();
+      await do_.initSession("k".repeat(64), KAYAK);
+      await do_.grantConsent(WANDERED, "model");
+      await do_.revokeConsent(WANDERED);
+      await do_.grantConsent(WANDERED, "user");
+
+      await do_.claimAccount("acct_1");
+
+      expect(claim).toHaveBeenCalledWith("k".repeat(64), [KAYAK, WANDERED]);
+    });
+
+    it("the origin the session was seeded with is never model-picked", async () => {
+      // POST /sessions carries a human's typed URL or recent-site click.
+      const { do_, claim } = makeDo();
+      await do_.initSession("k".repeat(64), KAYAK);
+
+      await do_.claimAccount("acct_1");
+
+      expect(claim).toHaveBeenCalledWith("k".repeat(64), [KAYAK]);
+    });
   });
 
   it("records the account id so later grants can write through", async () => {
