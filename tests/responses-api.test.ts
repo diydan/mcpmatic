@@ -121,3 +121,78 @@ describe("decideResponses", () => {
     expect(decideResponses(raw)).toMatchObject({ kind: "tool", arguments: {} });
   });
 });
+
+describe("responsesBody — a tool call round trip", () => {
+  // The turn that opens with a tool call is now the normal case: the system
+  // prompt requires navigate_to first. Chaining it back for the follow-up
+  // call sends the assistant's tool_calls plus the tool's result, and the
+  // Responses API rejects a function_call_output whose call_id matches no
+  // function_call in the same input — "7003: User Input Error" on screen,
+  // with the page already navigated and the user left mid-task.
+  const chained = [
+    { role: "system" as const, content: "you operate websites" },
+    { role: "user" as const, content: "plan and price my trip" },
+    {
+      role: "assistant" as const,
+      content: "",
+      tool_calls: [
+        {
+          id: "call_abc123",
+          type: "function" as const,
+          function: {
+            name: "navigate_to",
+            arguments: '{"origin":"https://www.kayak.com"}',
+          },
+        },
+      ],
+    },
+    {
+      role: "tool" as const,
+      tool_call_id: "call_abc123",
+      content: "opened https://www.kayak.com",
+    },
+  ];
+
+  function input() {
+    return (
+      responsesBody(chained, []) as { input: Array<Record<string, unknown>> }
+    ).input;
+  }
+
+  it("emits a function_call for the assistant's tool call", () => {
+    const call = input().find((i) => i.type === "function_call");
+    expect(call).toBeTruthy();
+    expect(call).toMatchObject({
+      call_id: "call_abc123",
+      name: "navigate_to",
+      arguments: '{"origin":"https://www.kayak.com"}',
+    });
+  });
+
+  it("puts the function_call before the output that answers it", () => {
+    const items = input();
+    const call = items.findIndex((i) => i.type === "function_call");
+    const output = items.findIndex((i) => i.type === "function_call_output");
+    expect(call).toBeGreaterThanOrEqual(0);
+    expect(output).toBeGreaterThan(call);
+  });
+
+  it("does not send an empty assistant turn alongside the call", () => {
+    // content was "" because the model spoke only by calling a tool.
+    const empty = input().filter(
+      (i) => i.role === "assistant" && i.content === "",
+    );
+    expect(empty).toHaveLength(0);
+  });
+
+  it("keeps an assistant turn that carried real text", () => {
+    const spoken = responsesBody(
+      [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "on it" },
+      ],
+      [],
+    ) as { input: Array<Record<string, unknown>> };
+    expect(spoken.input).toContainEqual({ role: "assistant", content: "on it" });
+  });
+});

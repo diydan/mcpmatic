@@ -116,6 +116,26 @@ export function responsesBody(
       });
       continue;
     }
+    // An assistant turn that called tools has to reach the Responses API as
+    // `function_call` items. Flattened to a bare role/content pair the calls
+    // are lost, and the `function_call_output` that follows then references a
+    // call_id nothing in the input declared — which the API rejects outright
+    // ("7003: User Input Error"), stranding the user mid-task with the page
+    // already navigated. Latent until the prompt began requiring a tool call
+    // on every turn; now it is the first thing every task does.
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      // Only when the model actually spoke as well as called.
+      if (m.content) input.push({ role: m.role, content: m.content });
+      for (const call of m.tool_calls) {
+        input.push({
+          type: "function_call",
+          call_id: call.id,
+          name: call.function.name,
+          arguments: call.function.arguments,
+        });
+      }
+      continue;
+    }
     input.push({ role: m.role, content: m.content ?? "" });
   }
   return {
