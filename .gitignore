@@ -31,3 +31,6 @@ docs/superpowers/
 
 # Internal positioning and demo shot list; not part of the public repo.
 docs/positioning-and-demo.md
+
+# Subagent-driven-development workspace: ledgers, briefs, review packages.
+.superpowers/
