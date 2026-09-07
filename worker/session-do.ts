@@ -398,7 +398,7 @@ export class SessionDO extends DurableObject<Env> {
   ): Promise<{ ok: boolean; consent?: string[]; error?: string }> {
     const decision = claimDecision(this.accountId(), accountId);
     if (!decision.ok) return { ok: false, error: decision.reason };
-    const { grants } = await this.env.ACCOUNT.getByName(accountId).claim(
+    await this.env.ACCOUNT.getByName(accountId).claim(
       this.sessionToken() ?? "",
       this.readConsent(),
     );
@@ -407,9 +407,15 @@ export class SessionDO extends DurableObject<Env> {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       accountId,
     );
-    this.writeConsent(grants);
+    // Deliberately NOT writeConsent(grants). `claim` returns the union of the
+    // account's whole grant history and this session's, which is the right
+    // answer for the account and the wrong one for the session: it made a
+    // session seeded with kayak.com announce, list and register tools for
+    // allbirds.com because some earlier session granted it. The account list
+    // is a capability, not this session's active state (spec §5).
+    const consent = this.readConsent();
     this.sendState();
-    return { ok: true, consent: grants };
+    return { ok: true, consent };
   }
 
   /**

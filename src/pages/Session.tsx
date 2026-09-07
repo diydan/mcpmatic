@@ -199,7 +199,11 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           try {
             const claimed = await claimWithStepUp(sessionToken, id);
             if (claimed.ok) {
-              seeded = claimed.consent;
+              // Union, not assignment: the origin this session was seeded
+              // with must survive a claim. The worker returns session
+              // consent only (spec §5), so this no longer imports the
+              // account's history.
+              seeded = unionOrigins(seeded, claimed.consent);
             }
           } catch {
             /* no account this load; the session still works */
