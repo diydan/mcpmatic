@@ -81,6 +81,17 @@ export type ClientMessage =
       on: boolean;
       autoGrantNew?: boolean;
     }
+  /**
+   * Spec §6's backstop: nothing has rendered, so put the user's own most
+   * recent site on screen. Render-only — deliberately NOT a `tool_exec` of
+   * `navigate_to`, because that routes through `allowOrigin`, which
+   * auto-grants. The origin here is unrelated to the task (it is whatever the
+   * user last visited), so granting it would list an unrelated site as
+   * granted-with-revoke in the Consent panel and register its tools. The DO
+   * runs the same SSRF checks as every other navigation and stops short of
+   * the consent grant.
+   */
+  | { v: 1; type: "render_fallback"; origin: string }
   | { v: 1; type: "generate_manifest"; origin: string }
   | { v: 1; type: "manifest_decision"; origin: string; name: string; approve: boolean }
   /**

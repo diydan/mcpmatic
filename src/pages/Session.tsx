@@ -34,7 +34,7 @@ import { navigationHref, normaliseOrigin } from "../../shared/origin";
 import { getStoredRecentSites, recordRecentSite } from "../lib/recent-sites";
 import {
   RENDER_FALLBACK_MS,
-  renderFallbackDecision,
+  renderFallbackEffect,
 } from "../lib/render-fallback";
 
 const MANIFESTS = allManifests();
@@ -298,33 +298,28 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
       // Spec §6 backstop. The agent's first call should be a navigation; if
       // nothing has rendered by now, put the user's last site on screen rather
       // than leaving them on a standby message.
+      //
+      // Render-only. It used to call `navigate_to`, which routes through
+      // `allowOrigin` on the DO — and `allowOrigin` auto-grants. So the
+      // fallback added the user's last site to `consented`, printed
+      // "Opening allbirds.com — granted for this session" one line after
+      // saying the site had nothing to do with the task, showed it in the
+      // Consent panel with a revoke button, and registered its tools
+      // (`fill_checkout` among them) on a trip-planning task. That is the
+      // originating bug of this branch, reintroduced by a new route. The
+      // dedicated `render_fallback` message keeps every SSRF check and stops
+      // short of the grant; `renderFallbackEffect` is the whole contract, so
+      // there is nothing else this timer may do.
       fallbackTimer = window.setTimeout(() => {
-        const decision = renderFallbackDecision({
+        const effect = renderFallbackEffect({
           framesSeen: framesSeen.current,
           fallbackFired: fallbackFired.current,
           recent: getStoredRecentSites(),
         });
-        if (decision.kind !== "navigate") return;
+        if (effect.kind !== "render-only") return;
         fallbackFired.current = true;
-        setLines((l) => [
-          ...l,
-          {
-            kind: "system",
-            // Deliberately not the "Connected to ..." wording: this origin is
-            // not part of the task, and saying so is the whole point.
-            text: `nothing opened yet — showing your last site, ${displayHosts([decision.origin]).join("")}`,
-          },
-        ]);
-        void (async () => {
-          try {
-            const mc = ensureModelContext();
-            const listed = await mc.getTools();
-            const nav = listed.find((t) => t.name === "navigate_to");
-            if (nav) await mc.executeTool(nav, { origin: decision.origin });
-          } catch {
-            /* browser binding missing; the standby message stands */
-          }
-        })();
+        setLines((l) => [...l, { kind: "system", text: effect.line }]);
+        bridgeRef.current?.send(effect.message);
       }, RENDER_FALLBACK_MS);
     };
 

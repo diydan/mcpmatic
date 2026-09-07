@@ -782,6 +782,9 @@ export class SessionDO extends DurableObject<Env> {
         // switch at a time without having to remember the other's value.
         await this.setAutonomous(msg.on, msg.autoGrantNew);
         return;
+      case "render_fallback":
+        await this.renderOnly(msg.origin);
+        return;
       case "generate_manifest":
         await this.onGenerateManifest(ws, msg.origin);
         return;
@@ -1367,6 +1370,44 @@ export class SessionDO extends DurableObject<Env> {
   }
 
   /** The one step that leaves the page it is on, so the one that needs the guard. */
+  /**
+   * Spec §6's backstop: put a page on screen when the agent has not.
+   *
+   * Render-only, and that is the entire point. The client fires this at the
+   * user's own most recent site — an origin with nothing to do with the task —
+   * so granting it would list an unrelated site as granted-with-revoke in the
+   * Consent panel and register its tools, including profile-filling ones. That
+   * is the originating bug ("Plan and price my trip" showing allbirds.com as a
+   * connected, granted site), and routing the fallback through `navigate_to`
+   * reintroduced it, because `navigate_to` goes through `allowOrigin`, which
+   * auto-grants. So this path never calls `allowOrigin`, never calls
+   * `grantConsent`, never broadcasts `origin_granted`, and never refreshes
+   * remote tools — no tool of this origin's is registered by opening it.
+   *
+   * The SSRF guard is not relaxed: `gotoGuarded` runs the same
+   * `hasUrlCredentials` / `isPrivateUrl` / `navigationStable` checks every
+   * other navigation runs, and the https-only rule matches `allowOrigin`'s.
+   *
+   * Silent on refusal, deliberately. The client says it is *opening* the site,
+   * never that it opened one, so the viewport's standby message is already the
+   * honest outcome; broadcasting an `error` here would additionally clear the
+   * chat box's busy state while the agent's turn is still running.
+   */
+  private async renderOnly(origin: string): Promise<void> {
+    if (!isHttpsOrigin(origin)) return;
+    const live = await this.ensureBrowser();
+    if (!live) return;
+    try {
+      await this.gotoGuarded(live, origin);
+    } catch {
+      return;
+    }
+    // The viewport needs to know where it is; the consent list does not
+    // change, and `sendState` re-sends it unmodified.
+    this.setCurrentOrigin(originFromUrl(live.page.url()));
+    this.sendState();
+  }
+
   private async gotoGuarded(live: LiveBrowser, url: string): Promise<void> {
     if (hasUrlCredentials(url)) throw new Error(CREDENTIALS_REFUSED);
     const blocked = await isPrivateUrl(url, makeResolve4());
