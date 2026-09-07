@@ -360,10 +360,18 @@ async function callModel(
     // argument, not the body.
     const qualified = model.includes("/") ? model : `openai/${model}`;
     const responses = isResponsesModel(qualified);
+    // A gateway is a deployment choice, not a default. Sending every call
+    // through one named "default" is not the binding's documented usage, and
+    // it is not harmless: a gateway carries its own provider keys and its own
+    // allowed-model list. Ours permitted `openai/gpt-5.6-luna` and refused
+    // `openai/gpt-5.6-sol`, so a live task ran three tool calls, navigated,
+    // and then died on "2018: Invalid User Credentials" — an error about a
+    // gateway nobody had chosen, on an account with nothing wrong with it.
+    // Named in AI_GATEWAY_ID, honoured; absent, the binding routes itself.
     const raw = await env.AI.run(
       qualified,
       responses ? responsesBody(messages, tools) : requestBody("", messages, tools),
-      { gateway: { id: env.AI_GATEWAY_ID || "default" } },
+      env.AI_GATEWAY_ID ? { gateway: { id: env.AI_GATEWAY_ID } } : undefined,
     );
     return responses ? decideResponses(raw) : decide(raw);
   }

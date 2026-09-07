@@ -93,7 +93,14 @@ describe("decide", () => {
 });
 
 describe("runTurn via the AI binding", () => {
-  it("qualifies a bare model, sends the tools, and uses the default gateway", async () => {
+  // This used to assert `{ gateway: { id: "default" } }`. Forcing every call
+  // through a gateway named "default" is not what the binding's documented
+  // usage does, and it cost a live task: `openai/gpt-5.6-luna` was permitted
+  // on that gateway and `openai/gpt-5.6-sol` was not, so the agent died on
+  // its third call with "2018: Invalid User Credentials" — an error about
+  // the gateway, on a worker whose account was fine. A gateway is a
+  // deployment choice; absent AI_GATEWAY_ID there is none to choose.
+  it("qualifies a bare model, sends the tools, and invents no gateway", async () => {
     const run = vi.fn(async () => GATEWAY_RESPONSE);
     const decision = await runTurn(
       { AI: { run }, OPENAI_MODEL: "gpt-5.5" },
@@ -103,7 +110,7 @@ describe("runTurn via the AI binding", () => {
 
     const [model, body, options] = run.mock.calls[0];
     expect(model).toBe("openai/gpt-5.5");
-    expect(options).toEqual({ gateway: { id: "default" } });
+    expect(options).toBeUndefined();
     // The binding takes the model as its first argument, not in the body.
     expect(body).not.toHaveProperty("model");
     expect(body.tools).toEqual([
