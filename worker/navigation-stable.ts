@@ -29,6 +29,7 @@
  */
 
 import type { ResolvedRecord, Resolve4Records } from "./doh-resolve4";
+import { parseIp } from "../shared/net";
 
 const RE_RESOLVE_DELAY_MS = 250;
 
@@ -59,17 +60,25 @@ export async function navigationStable(
   const second = await resolve(hostname);
   if (second.length === 0) return { ok: false, reason: "no stable resolution" };
 
-  const firstSet = new Set(first.map((r: ResolvedRecord) => r.ip));
-  const secondSet = new Set(second.map((r: ResolvedRecord) => r.ip));
-
-  for (const ip of firstSet) {
-    if (!secondSet.has(ip)) {
-      return { ok: false, reason: `record flip detected: ${ip}` };
-    }
-  }
-  for (const ip of secondSet) {
-    if (!firstSet.has(ip)) {
-      return { ok: false, reason: `record flip detected: ${ip}` };
+  // Ask the question the threat is actually about.
+  //
+  // This used to require the two resolutions to be identical, in both
+  // directions. That is a proxy for "the record did not change", and it is
+  // the wrong proxy: CDNs rotate addresses constantly, so a public-to-public
+  // rotation — an ordinary load-balanced site — was refused as an attack.
+  // Together with the TTL floor it made most of the web unreachable.
+  //
+  // The rebind we fear is a pivot *inward*: public at guard time, private at
+  // fetch time. So both resolutions are checked for the property that
+  // matters. A flip into private space is still caught, at whichever
+  // resolution sees it, and a flip between two public addresses is allowed —
+  // the browser reaches a public host either way, which it could have done
+  // by being handed that address directly.
+  for (const record of [...first, ...second] as ResolvedRecord[]) {
+    const ip = parseIp(record.ip);
+    if (!ip) return { ok: false, reason: `unparseable address: ${record.ip}` };
+    if (ip.isPrivate || ip.isLoopback || ip.isLinkLocal) {
+      return { ok: false, reason: `private address in resolution: ${record.ip}` };
     }
   }
   return { ok: true };

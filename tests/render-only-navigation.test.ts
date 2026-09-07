@@ -297,8 +297,14 @@ describe("render_fallback keeps every navigation guard", () => {
   });
 
   it("refuses when the hostname does not resolve stably", async () => {
-    // navigationStable resolves twice, ~250 ms apart, and aborts if the
-    // answers differ. Fail-closed, exactly as on the granted path.
+    // navigationStable resolves twice, ~250 ms apart, and aborts if either
+    // answer is a private address. Fail-closed, exactly as on the granted
+    // path.
+    //
+    // The flip below used to land on another *public* address, back when the
+    // check was set equality. That is a CDN rotating, not an attack, and it
+    // is allowed now — so this exercises the rebind that matters: public at
+    // guard time, private at fetch time.
     //
     // Three A queries reach the resolver: isPrivateUrl's, then
     // navigationStable's two. The flip lands on the third, which is the
@@ -318,7 +324,7 @@ describe("render_fallback keeps every navigation guard", () => {
               {
                 type: 1,
                 TTL: 300,
-                data: call < 3 ? "93.184.216.34" : "198.51.100.7",
+                data: call < 3 ? "93.184.216.34" : "10.0.0.1",
               },
             ],
           }),

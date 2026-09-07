@@ -39,18 +39,10 @@ const DOH_TIMEOUT_MS = 2_000;
 const DNS_TYPE_A = 1;
 const DNS_TYPE_AAAA = 28;
 
-/**
- * Floor below which a short-TTL attack is feasible. A resolver that flips a
- * record inside 30 s is exactly the rebind window we fear; refusing anything
- * lower forces the attacker to commit to the address they give us for the
- * full navigation window. (Review H2.)
- */
-export const MIN_TTL_SECONDS = 30;
-
 /** One address record as returned by `makeResolve4Records`. */
 export type ResolvedRecord = { ip: string; ttl: number };
 
-/** Resolve a hostname to all of its (TTL-filtered) A and AAAA records. */
+/** Resolve a hostname to all of its A and AAAA records, whatever their TTL. */
 export type Resolve4Records = (hostname: string) => Promise<ResolvedRecord[]>;
 
 /** Legacy: just the IPs, dropping TTLs. */
@@ -117,16 +109,22 @@ async function queryDoH(
   // `.trim()` defends against a (theoretical) malformed data field with
   // leading/trailing whitespace that would slip the parse.
   //
-  // TTL floor: a sub-MIN_TTL_SECONDS answer is exactly the rebind window.
-  // Refusing it forces the attacker to commit to the address for the full
-  // navigation window. Records without a TTL are likewise dropped — an
-  // attacker would love us to ignore the timing channel.
+  // No TTL floor. There used to be one (Review H2): answers under 30 s were
+  // dropped, on the reasoning that a short TTL is the rebind window. Its own
+  // comment conceded it "loses a few legitimate short-TTL hosts" — but the
+  // floor is inherited by `makeResolve4` too, so a short TTL blocked session
+  // creation as well as navigation, and short TTLs are simply how CDNs work.
+  // Measured: johnlewis.com 20 s, news.ycombinator.com 1 s, both refused as
+  // "invalid origin", while the long-TTL catalog sites passed. It cost most
+  // of the web to buy a timing bound that `navigationStable` now gets by
+  // asking the question that actually matters — see that file.
+  //
+  // The TTL is still reported, so a caller that wants to reason about it can.
   return body.Answer
     .filter(
       (a): a is DoHAnswer & { data: string } =>
         a.type === wantType && typeof a.data === "string",
     )
-    .filter((a) => (a.TTL ?? 0) >= MIN_TTL_SECONDS)
     .map((a) => ({ ip: a.data.trim(), ttl: a.TTL ?? 0 }));
 }
 
