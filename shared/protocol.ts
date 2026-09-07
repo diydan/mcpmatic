@@ -130,6 +130,18 @@ export type ServerMessage =
     }
   | { v: 1; type: "audit"; rows: AuditRow[] }
   /**
+   * An origin entered this session's consent set. `source` says who chose it:
+   * "user" for an origin typed or clicked, "model" for one the agent picked
+   * on its own. The client words the transcript line differently for each, and
+   * grantConsent uses it to decide whether the grant is durable.
+   */
+  | {
+      v: 1;
+      type: "origin_granted";
+      origin: string;
+      source: "model" | "user";
+    }
+  /**
    * A suspended tool call waiting on a human. Carries field *names* only —
    * there is no value on the server to send, which is the point.
    */

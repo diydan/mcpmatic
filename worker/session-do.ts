@@ -478,7 +478,10 @@ export class SessionDO extends DurableObject<Env> {
     return { ok: true, consent: allowed };
   }
 
-  async grantConsent(origin: string): Promise<{ ok: true }> {
+  async grantConsent(
+    origin: string,
+    source: "model" | "user" = "user",
+  ): Promise<{ ok: true }> {
     if (this.expired()) {
       throw new Error("session expired");
     }
@@ -502,6 +505,9 @@ export class SessionDO extends DurableObject<Env> {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
         JSON.stringify(allowed),
       );
+      // Spec §3. Only on the transition: re-granting a consented origin is a
+      // no-op and must not produce a second transcript line.
+      this.broadcast({ v: 1, type: "origin_granted", origin, source });
     }
     // First consent is what earns a browser. Launching on page load meant every
     // visitor burned a Browser Rendering session before granting anything.
@@ -1478,7 +1484,7 @@ export class SessionDO extends DurableObject<Env> {
     // gate a model-driven navigation to an arbitrary site would silently
     // widen the grant set — the M9 agent review item this closes.
     if (!known.has(origin) && !this.readAutoGrantNew()) return false;
-    await this.grantConsent(origin);
+    await this.grantConsent(origin, "model");
     return this.consented(origin);
   }
 
