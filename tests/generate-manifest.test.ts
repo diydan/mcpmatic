@@ -200,3 +200,49 @@ describe("generateManifest — a goto may not leave the origin", () => {
     expect(outcome.ok).toBe(false);
   });
 });
+
+describe("generateManifest — saying what actually came back", () => {
+  // "could not map https://www.kayak.com: not valid JSON" appeared in every
+  // production run today and identified nothing. The model's reply is thrown
+  // away at the point of failure, so the same three words cover a truncated
+  // manifest, prose instead of JSON, and `decide`'s own "(no reply)" fallback
+  // when the model returned nothing at all — which are three different bugs
+  // with three different fixes.
+  it("quotes the reply when it is not JSON", async () => {
+    const run = vi.fn(async () => completionWith("Sure! Here are some tools:"));
+    const outcome = await generateManifest(
+      { AI: { run } },
+      "https://example.com",
+      ELEMENTS,
+    );
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("expected failure");
+    expect(outcome.error).toContain("Sure! Here are some tools:");
+  });
+
+  it("distinguishes a model that returned nothing from bad JSON", async () => {
+    // `decide` substitutes this string when the payload carries no content,
+    // so it arrives here looking exactly like a malformed manifest.
+    const run = vi.fn(async () => completionWith(""));
+    const outcome = await generateManifest(
+      { AI: { run } },
+      "https://example.com",
+      ELEMENTS,
+    );
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("expected failure");
+    expect(outcome.error).toMatch(/returned no|no reply/i);
+  });
+
+  it("truncates a long reply rather than pasting a page into the transcript", async () => {
+    const run = vi.fn(async () => completionWith("x".repeat(5000)));
+    const outcome = await generateManifest(
+      { AI: { run } },
+      "https://example.com",
+      ELEMENTS,
+    );
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("expected failure");
+    expect((outcome.error ?? "").length).toBeLessThan(400);
+  });
+});

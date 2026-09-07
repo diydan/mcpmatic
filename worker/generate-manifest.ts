@@ -160,6 +160,20 @@ function validateManifest(raw: unknown, origin: string): ToolManifest | null {
  * call's request/response cycle. Nothing returned here is callable: the
  * caller stores these as drafts, and a human approves each one first.
  */
+/**
+ * What `decide` and `decideResponses` substitute when a payload carries no
+ * content. They arrive here looking exactly like a malformed manifest, so the
+ * failure has to name the difference: nothing came back, versus something did
+ * and it was wrong.
+ */
+const NO_CONTENT = ["(no reply)", "The model returned no output."];
+
+/** Enough of the reply to recognise it, never enough to paste a page. */
+function excerpt(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > 200 ? `${flat.slice(0, 200)}…` : flat;
+}
+
 export async function generateManifest(
   env: ModelEnv,
   origin: string,
@@ -183,7 +197,17 @@ export async function generateManifest(
     try {
       parsed = JSON.parse(cleaned);
     } catch {
-      return { ok: false, reason: "invalid-response", error: "not valid JSON" };
+      // Say what actually came back. "not valid JSON" covered three separate
+      // bugs — a truncated manifest, prose instead of JSON, and `decide`'s own
+      // placeholder for a payload with no content at all — and telling them
+      // apart cost a production run each.
+      return {
+        ok: false,
+        reason: "invalid-response",
+        error: NO_CONTENT.includes(cleaned)
+          ? `the model returned no manifest (${cleaned})`
+          : `not valid JSON: ${excerpt(cleaned)}`,
+      };
     }
     if (!Array.isArray(parsed)) {
       return { ok: false, reason: "invalid-response", error: "expected a JSON array" };
