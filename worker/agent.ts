@@ -331,7 +331,21 @@ export async function runTurn(
   messages: ChatTurn[],
   tools: ToolSchema[],
 ): Promise<AgentDecision> {
-  const first = await callModel(env, chooseModel(env, tools, messages), messages, tools);
+  const model = chooseModel(env, tools, messages);
+  // The model a turn escalates away from, and so the one it can fall back to.
+  const fallback = env.OPENAI_MODEL || env.MODEL_EASY || DEFAULT_EASY;
+  let first: AgentDecision;
+  try {
+    first = await callModel(env, model, messages, tools);
+  } catch (err) {
+    // A model the account cannot call must cost a weaker answer, not the
+    // whole task. Production died exactly here: three tool calls spent, Kayak
+    // open on screen, and the turn abandoned on a provider credentials error
+    // for the escalated model. A turn that never escalated has nowhere to
+    // degrade to, so it fails as before rather than retrying itself.
+    if (model === fallback) throw err;
+    return callModel(env, fallback, messages, tools);
+  }
   // Escalate only on evidence. If the small model produced arguments the
   // tool's own schema rejects, the larger one gets one attempt at the same
   // turn. Retrying at most once keeps a bad turn from costing three calls.
@@ -348,7 +362,32 @@ function argumentsFit(decision: AgentDecision, tools: readonly ToolSchema[]): bo
   return checkArgs(tool.inputSchema, decision.arguments).ok;
 }
 
+/**
+ * Every failure out of here names the model that produced it.
+ *
+ * Providers answer with bare codes — "2018: Invalid User Credentials" — and
+ * that string reached the transcript unqualified. It identified neither the
+ * model nor the call site, and a turn can involve two models plus an
+ * asynchronous manifest generation, so narrowing it took three production
+ * runs and a wrong hypothesis. The provider's own words are kept; the model
+ * is prepended so the next one takes a single run.
+ */
 async function callModel(
+  env: ModelEnv,
+  model: string,
+  messages: ChatTurn[],
+  tools: ToolSchema[],
+): Promise<AgentDecision> {
+  try {
+    return await callModelOnce(env, model, messages, tools);
+  } catch (err) {
+    throw new Error(
+      `${model}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+async function callModelOnce(
   env: ModelEnv,
   model: string,
   messages: ChatTurn[],

@@ -237,3 +237,65 @@ describe("SYSTEM prompt", () => {
     expect(system).not.toContain("Call inspect_site to see what it exposes, then propose a manifest");
   });
 });
+
+describe("a model that the account cannot call", () => {
+  // Observed in production: the chain ran navigate_to and two list_remote_tools,
+  // then the turn escalated past CHAINING_AFTER and died on the bare provider
+  // string "2018: Invalid User Credentials". It named no model and no call
+  // site, so which of two candidate paths produced it took three runs and a
+  // wrong hypothesis to narrow down. And one unreachable model cost the user
+  // the whole task, with a navigated page still on screen.
+  const chained: ChatTurn[] = [
+    { role: "user", content: "find me a flight" },
+    { role: "tool", tool_call_id: "a", content: "opened kayak" },
+    { role: "tool", tool_call_id: "b", content: "no webmcp tools" },
+  ];
+
+  it("escalates past two tool results, as designed", async () => {
+    const run = vi.fn(async () => GATEWAY_RESPONSE);
+    await runTurn({ AI: { run } }, chained, TOOLS);
+    expect(run.mock.calls[0][0]).toBe("openai/gpt-5.6-sol");
+  });
+
+  it("falls back to the working model rather than losing the turn", async () => {
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("2018: Invalid User Credentials"))
+      .mockResolvedValueOnce(GATEWAY_RESPONSE);
+
+    const decision = await runTurn({ AI: { run } }, chained, TOOLS);
+
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[0][0]).toBe("openai/gpt-5.6-sol");
+    expect(run.mock.calls[1][0]).toBe("openai/gpt-5.6-luna");
+    expect(decision).toMatchObject({ name: "search_catalog_on_allbirds_com" });
+  });
+
+  it("names the model when the fallback fails too", async () => {
+    const run = vi.fn(async () => {
+      throw new Error("2018: Invalid User Credentials");
+    });
+    await expect(runTurn({ AI: { run } }, chained, TOOLS)).rejects.toThrow(
+      /openai\/gpt-5\.6-luna/,
+    );
+  });
+
+  it("keeps the provider's own words in the message", async () => {
+    const run = vi.fn(async () => {
+      throw new Error("2018: Invalid User Credentials");
+    });
+    await expect(runTurn({ AI: { run } }, chained, TOOLS)).rejects.toThrow(
+      /Invalid User Credentials/,
+    );
+  });
+
+  it("does not retry when the failing model was already the fallback", async () => {
+    // A single-model turn has nowhere to degrade to; retrying the same model
+    // just doubles the latency before the same failure.
+    const run = vi.fn(async () => {
+      throw new Error("nope");
+    });
+    await expect(runTurn({ AI: { run } }, MESSAGES, TOOLS)).rejects.toThrow();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});
