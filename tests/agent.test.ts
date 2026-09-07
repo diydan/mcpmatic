@@ -182,13 +182,12 @@ describe("SYSTEM prompt", () => {
   it("licenses navigation to any https site", () => {
     // Spec §2: with no origin granted the model sees only the spine and
     // previously had no licence to pick a destination.
-    expect(system).toMatch(/any https site/i);
+    expect(system).toContain("You may navigate to any https site you judge relevant to the task.");
   });
 
   it("requires the first tool call to be a navigation", () => {
     // Spec §6: this is the primary mechanism for "a page always renders".
-    expect(system).toMatch(/first tool call/i);
-    expect(system).toContain("navigate_to");
+    expect(system).toContain("Your first tool call on a new task is always navigate_to, so the user sees a live page as early as possible.");
   });
 
   it("presents pre-wired origins as examples, not as the available world", () => {
@@ -201,6 +200,12 @@ describe("SYSTEM prompt", () => {
   });
 
   it("still tells the model it cannot see the page", () => {
+    expect(system).toContain("You cannot see the remote pixels.");
     expect(system).toContain("get_page_state");
+  });
+
+  it("names list_remote_tools as the trigger for tool synthesis, not inspect_site", () => {
+    expect(system).toContain("Call list_remote_tools to find out whether the site publishes WebMCP tools of its own — on a site that publishes none, that call is what starts synthesising draft tools for it.");
+    expect(system).not.toContain("Call inspect_site to see what it exposes, then propose a manifest");
   });
 });
