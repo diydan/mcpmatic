@@ -29,6 +29,7 @@ import { accountId, claimWithStepUp } from "../lib/account-store";
 import { PasskeyBar } from "../components/PasskeyBar";
 import { displayHosts, unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
+import { runToolCall } from "../lib/tool-call-turn";
 import { allManifests, STORES } from "../../shared/stores";
 import { navigationHref, normaliseOrigin } from "../../shared/origin";
 import { getStoredRecentSites, recordRecentSite } from "../lib/recent-sites";
@@ -362,6 +363,35 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
               source: msg.source,
             });
             if (line) setLines((l) => [...l, { kind: "system", text: line }]);
+          }
+          if (msg.type === "tool_call") {
+            // The DO has set pending.waitingId and stopped; the turn resumes
+            // only on a tool_result carrying this same id. runToolCall never
+            // throws and always yields one payload, so no exit path can leave
+            // the turn waiting — that hang is the bug this handler fixes.
+            setLines((l) => [
+              ...l,
+              { kind: "tool", text: `the agent ran ${msg.name}` },
+            ]);
+            void (async () => {
+              const payload = await runToolCall(
+                { id: msg.id, name: msg.name, arguments: msg.arguments },
+                ensureModelContext(),
+              );
+              if (!payload.ok) {
+                setLines((l) => [
+                  ...l,
+                  { kind: "system", text: payload.result },
+                ]);
+              }
+              bridgeRef.current?.send({
+                v: 1,
+                type: "tool_result",
+                callId: payload.callId,
+                ok: payload.ok,
+                result: payload.result,
+              });
+            })();
           }
           if (msg.type === "state") {
             setDriving(msg.driving);
