@@ -32,6 +32,7 @@ import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
 import { navigationHref, normaliseOrigin } from "../../shared/origin";
 import { getStoredRecentSites, recordRecentSite } from "../lib/recent-sites";
+import { grantTranscriptLine } from "../lib/grant-line";
 import {
   RENDER_FALLBACK_MS,
   renderFallbackEffect,
@@ -352,16 +353,15 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
               next.add(msg.origin);
               return next;
             });
-            setLines((l) => [
-              ...l,
-              {
-                kind: "system",
-                text:
-                  msg.source === "model"
-                    ? `Opening ${displayHosts([msg.origin]).join("")} — granted for this session`
-                    : `granted ${msg.origin}`,
-              },
-            ]);
+            // Sole author of the "granted" line, for both sources. See
+            // grant-line.ts: persistConsent used to append an identical line
+            // of its own, so every human grant printed twice.
+            const line = grantTranscriptLine({
+              kind: "broadcast",
+              origin: msg.origin,
+              source: msg.source,
+            });
+            if (line) setLines((l) => [...l, { kind: "system", text: line }]);
           }
           if (msg.type === "state") {
             setDriving(msg.driving);
@@ -504,7 +504,11 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
     setConsented(next);
     const registration = registrationRef.current;
     if (registration) await syncTools(registration, next, observedRef.current);
-    setLines((l) => [...l, { kind: "system", text: `granted ${origin}` }]);
+    // No line here. The DO broadcasts `origin_granted` with source "user" for
+    // this same grant and the bridge handler writes it; appending one here as
+    // well is what printed every human grant twice.
+    const line = grantTranscriptLine({ kind: "local-grant", origin });
+    if (line) setLines((l) => [...l, { kind: "system", text: line }]);
     return true;
   };
 
