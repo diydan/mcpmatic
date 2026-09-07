@@ -9,7 +9,7 @@ import {
   type ToolSchema,
 } from "../shared/protocol";
 import { runSteps } from "./steps";
-import { originSlug } from "../shared/origin";
+import { isHttpsOrigin, originSlug } from "../shared/origin";
 import { isPrivateUrl } from "./is-private-url";
 import { makeResolve4, makeResolve4Records } from "./doh-resolve4";
 import { navigationStable } from "./navigation-stable";
@@ -1488,6 +1488,13 @@ export class SessionDO extends DurableObject<Env> {
   private async allowOrigin(origin: string): Promise<boolean> {
     if (!origin) return false;
     if (this.consented(origin)) return true;
+    // The model path must not be able to grant what the human path refuses.
+    // POST /s/<token>/consent rejects anything but https, and the SYSTEM
+    // prompt licenses "any https site" — but `isPrivateUrl` permits http:
+    // too, and `displayHosts` strips the scheme, so a cleartext auto-grant
+    // was both reachable and invisible in the transcript. Reject it here,
+    // at the one choke point every model-driven grant goes through.
+    if (!isHttpsOrigin(origin)) return false;
     if (!this.readAutonomous()) return false;
     const known = new Set(MANIFESTS.map((m) => m.origin));
     // Catalog origins are auto-granted as soon as autonomous is on; anything

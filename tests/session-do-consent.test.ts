@@ -314,4 +314,51 @@ describe("SessionDO autonomous — autoGrantNew gate (M9)", () => {
     const { consent } = await do_.listConsent();
     expect(consent).toContain(offCatalogOrigin);
   });
+
+  /**
+   * The human grant route (`POST /s/<token>/consent`) rejects anything but
+   * https, and the SYSTEM prompt licenses "any https site". `isPrivateUrl`
+   * permits `http:` as well, and `displayHosts` strips the scheme from the
+   * transcript — so before this gate the model, and only the model, could
+   * auto-grant a cleartext origin and the user could not see that it had.
+   */
+  describe("https-only", () => {
+    const cleartext = "http://www.example-store.example";
+
+    it("refuses to auto-grant an http origin", async () => {
+      await do_.initSession("t".repeat(64));
+      // Both flags default on, so this is the wide-open configuration.
+      expect(await allowOrigin(cleartext)).toBe(false);
+      const { consent } = await do_.listConsent();
+      expect(consent).not.toContain(cleartext);
+    });
+
+    it("refuses even when the same host is granted over https", async () => {
+      // Consent keys on the full origin, scheme included: granting the https
+      // origin must not carry over to its cleartext twin.
+      await do_.initSession("t".repeat(64));
+      await do_.grantConsent("https://www.example-store.example");
+      expect(await allowOrigin(cleartext)).toBe(false);
+    });
+
+    it("refuses a non-origin string rather than granting it", async () => {
+      await do_.initSession("t".repeat(64));
+      expect(await allowOrigin("www.example-store.example")).toBe(false);
+      expect(await allowOrigin("javascript:alert(1)")).toBe(false);
+    });
+
+    it("still auto-grants an https origin", async () => {
+      await do_.initSession("t".repeat(64));
+      expect(await allowOrigin("https://www.example-store.example")).toBe(true);
+    });
+
+    it("still honours an http origin a human already granted", async () => {
+      // `allowOrigin` gates *granting*, not the consent list it reads. An
+      // origin already in the list stays allowed — only the human route can
+      // put one there, and it refuses http anyway.
+      await do_.initSession("t".repeat(64));
+      await do_.grantConsent(cleartext);
+      expect(await allowOrigin(cleartext)).toBe(true);
+    });
+  });
 });

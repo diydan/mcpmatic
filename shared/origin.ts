@@ -30,6 +30,23 @@ export function normaliseOrigin(raw: string): string | null {
   return new URL(href).origin;
 }
 
+/**
+ * True only for a well-formed `https:` origin.
+ *
+ * Unlike `navigationHref` this adds no scheme: a bare host, an `http:` URL and
+ * anything unparseable are all false. The consent routes in `worker/index.ts`
+ * apply exactly this rule to a human grant, and `allowOrigin` applies it to a
+ * model-picked one, so the two paths cannot disagree about what may be granted.
+ */
+export function isHttpsOrigin(raw: string): boolean {
+  if (!raw) return false;
+  try {
+    return new URL(raw).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /** Hostname with `www.` stripped and dots turned into `_`. Used to origin-qualify tool names. */
 export function originSlug(origin: string): string {
   let host = origin;

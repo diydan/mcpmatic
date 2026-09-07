@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isHttpsOrigin,
   navigationHref,
   normaliseOrigin,
   originSlug,
@@ -71,5 +72,34 @@ describe("originSlug / qualifiedToolName", () => {
     expect(name).toMatch(/^[A-Za-z0-9_.-]{1,128}$/);
     expect(name).not.toContain(" ");
     expect(name).not.toContain("!");
+  });
+});
+
+/**
+ * The rule both consent paths apply: `worker/index.ts`'s POST/DELETE routes for
+ * a human grant, and `allowOrigin` for a model-picked one. It adds no scheme —
+ * that is `navigationHref`'s job — so a bare host is not an origin here.
+ */
+describe("isHttpsOrigin", () => {
+  it("accepts an https origin", () => {
+    expect(isHttpsOrigin("https://www.allbirds.com")).toBe(true);
+    expect(isHttpsOrigin("https://example.com/some/path?q=1")).toBe(true);
+  });
+
+  it("rejects cleartext http", () => {
+    expect(isHttpsOrigin("http://www.allbirds.com")).toBe(false);
+  });
+
+  it("rejects a bare host — it does not assume a scheme", () => {
+    expect(isHttpsOrigin("allbirds.com")).toBe(false);
+    expect(isHttpsOrigin("www.allbirds.com")).toBe(false);
+  });
+
+  it("rejects other schemes and unparseable input", () => {
+    expect(isHttpsOrigin("javascript:alert(1)")).toBe(false);
+    expect(isHttpsOrigin("data:text/html,<b>x</b>")).toBe(false);
+    expect(isHttpsOrigin("file:///etc/passwd")).toBe(false);
+    expect(isHttpsOrigin("")).toBe(false);
+    expect(isHttpsOrigin("   ")).toBe(false);
   });
 });
