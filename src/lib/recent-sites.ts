@@ -81,7 +81,14 @@ export function recordRecentSite(
     }
 
     const hostBase = getDomainBase(u.hostname);
-    const existing = getRecentSites();
+    // Stored history only. Baselining off `getRecentSites()` meant the first
+    // write of a first-time visitor's session persisted that function's canned
+    // `STORES` fallback into localStorage — so one real visit wrote Allbirds,
+    // Brooklinen and Kayak in as if they were history, and
+    // `getStoredRecentSites`'s promise ("never the canned STORES list") became
+    // false from then on. That is what put Allbirds on screen for a
+    // trip-planning task.
+    const existing = getStoredRecentSites();
 
     // Match against STORES by origin OR domain root (e.g. kayak.fr matches kayak.com)
     const storeMatch = STORES.find((s) => {

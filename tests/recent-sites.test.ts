@@ -46,12 +46,61 @@ describe("getStoredRecentSites", () => {
     expect(getStoredRecentSites()).toEqual([]);
   });
 
-  it("never returns the canned STORES fallback", () => {
-    // This is the bug this function exists to prevent from recurring: a
-    // first-time user must not get Allbirds (or any other canned entry)
-    // back from the stored-only reader.
+  it("never returns the canned STORES fallback, even after a real visit", () => {
+    // This is the bug this function exists to prevent from recurring, tested
+    // where it actually happened rather than on an empty store.
+    // `recordRecentSite` used to baseline off `getRecentSites()`, whose
+    // first-visit fallback IS the canned list — so one genuine visit wrote
+    // Allbirds, Brooklinen and Kayak into localStorage as if they were
+    // history, and the render fallback then opened Allbirds on a
+    // trip-planning task.
+    recordRecentSite("https://www.example.test", "Example", "A real visit.");
+
     const stored = getStoredRecentSites();
+
+    expect(stored.map((s) => s.origin)).toEqual(["https://www.example.test"]);
     expect(stored.some((s) => s.origin.includes("allbirds"))).toBe(false);
+  });
+
+  it("keeps a leftover canned row without re-seeding the rest of the catalog", () => {
+    // A browser that visited before the fix still holds canned rows, and once
+    // persisted they are indistinguishable from history — so they stay. What
+    // must not happen is a new visit bringing the others back with them.
+    const canned = {
+      origin: "https://www.allbirds.com",
+      label: "Allbirds",
+      kind: "shopify-webmcp",
+      blurb: "Wool runners.",
+      lastUsed: Date.now() - 60_000,
+    };
+    const real = {
+      origin: "https://www.gov.uk",
+      label: "GOV.UK",
+      kind: "facade",
+      blurb: "Government services.",
+      lastUsed: Date.now() - 30_000,
+    };
+    localStorage.setItem(KEY, JSON.stringify([real, canned]));
+
+    recordRecentSite("https://www.example.test", "Example", "A real visit.");
+
+    const origins = getStoredRecentSites().map((s) => s.origin);
+    expect(origins).toEqual([
+      "https://www.example.test",
+      "https://www.gov.uk",
+      "https://www.allbirds.com",
+    ]);
+    // Brooklinen and Kayak were never visited and must not appear.
+    expect(origins.some((o) => o.includes("brooklinen"))).toBe(false);
+    expect(origins.some((o) => o.includes("kayak"))).toBe(false);
+  });
+
+  it("the render fallback sees nothing at all until a real visit", () => {
+    // `renderFallbackDecision` reads this list and navigates to entry zero.
+    // An empty answer is what makes it decline rather than guess.
+    expect(getStoredRecentSites()).toEqual([]);
+    recordRecentSite("https://www.example.test", "Example", "A real visit.");
+    expect(getStoredRecentSites()[0].origin).toBe("https://www.example.test");
   });
 });
 
