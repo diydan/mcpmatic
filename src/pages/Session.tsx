@@ -309,6 +309,24 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
         },
         onMessage: (msg: ServerMessage) => {
           if (msg.type === "frame") setJpeg(msg.jpeg);
+          if (msg.type === "origin_granted") {
+            setConsented((prev) => {
+              if (prev.has(msg.origin)) return prev;
+              const next = new Set(prev);
+              next.add(msg.origin);
+              return next;
+            });
+            setLines((l) => [
+              ...l,
+              {
+                kind: "system",
+                text:
+                  msg.source === "model"
+                    ? `Opening ${displayHosts([msg.origin]).join("")} — granted for this session`
+                    : `granted ${msg.origin}`,
+              },
+            ]);
+          }
           if (msg.type === "state") {
             setDriving(msg.driving);
             setBrowser(msg.browser);
