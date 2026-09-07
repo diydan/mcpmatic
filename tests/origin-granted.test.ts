@@ -125,3 +125,56 @@ describe("grantConsent broadcasts the grant transition", () => {
     expect(grants(sent)[0]).toMatchObject({ source: "user" });
   });
 });
+
+describe("account write-through", () => {
+  function makeDoWithAccount() {
+    const sql = makeSql();
+    const grant = vi.fn(async () => ({ ok: true as const }));
+    const account = { grant, claim: vi.fn(), revoke: vi.fn() };
+    const ctx = {
+      storage: { sql, transactionSync: (cb: () => void) => cb() },
+      // grantConsent defers the account write with waitUntil; run it eagerly
+      // so the assertion does not race the promise.
+      waitUntil: (p: Promise<unknown>) => void p,
+      blockConcurrencyWhile: (cb: () => Promise<void>) => cb(),
+      setWebSocketAutoResponse: vi.fn(),
+      getWebSockets: vi.fn(() => []),
+    };
+    const env = {
+      ACCOUNT: { getByName: vi.fn(() => account) },
+      MANIFEST_REGISTRY: undefined,
+      BROWSER: undefined,
+    };
+    const do_ = new SessionDO(
+      ctx as unknown as Parameters<typeof SessionDO>[0],
+      env as unknown as Parameters<typeof SessionDO>[1],
+    );
+    return { do_, grant, sql };
+  }
+
+  it("writes a user-typed origin through to the account", async () => {
+    const { do_, grant, sql } = makeDoWithAccount();
+    await do_.initSession("u".repeat(64), undefined);
+    sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('accountId', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      "acct_1",
+    );
+    await do_.grantConsent("https://typed.example.com", "user");
+    expect(grant).toHaveBeenCalledWith("https://typed.example.com");
+  });
+
+  it("keeps a model-picked origin session-scoped", async () => {
+    // Spec §5: without this a roaming agent permanently enlarges the
+    // account's grant set, and every future session inherits it.
+    const { do_, grant, sql } = makeDoWithAccount();
+    await do_.initSession("m".repeat(64), undefined);
+    sql.exec(
+      `INSERT INTO meta (key, value) VALUES ('accountId', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      "acct_1",
+    );
+    await do_.grantConsent("https://wandered.example.com", "model");
+    expect(grant).not.toHaveBeenCalled();
+  });
+});

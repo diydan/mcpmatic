@@ -489,8 +489,13 @@ export class SessionDO extends DurableObject<Env> {
     // grant outlives the session's two hours. Not awaited: consent must answer
     // without waiting on a second Durable Object, and the local mirror below
     // is what every read in this class actually uses.
+    //
+    // Only for an origin the human chose. A model-picked origin is granted for
+    // this session and no longer: otherwise an agent that roams permanently
+    // enlarges the account's grant set, and every later session inherits every
+    // site the agent ever wandered onto.
     const accountId = this.accountId();
-    if (accountId && origin) {
+    if (accountId && origin && source === "user") {
       this.ctx.waitUntil(
         this.env.ACCOUNT.getByName(accountId)
           .grant(origin)
