@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Header } from "../components/Header";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { getRecentSites, recordRecentSite, type RecentSite } from "../lib/recent-sites";
+import { TASK_CHIPS } from "../lib/task-chips";
 
 export function Home() {
   const nav = useNavigate();
@@ -87,28 +88,7 @@ export function Home() {
         <div className="home__prompts">
           <span className="home__prompts-label">Try asking:</span>
           <div className="home__chips">
-            {[
-              {
-                icon: "🛒",
-                text: "Find the best deal across 4 stores",
-                origin: "https://www.allbirds.com",
-              },
-              {
-                icon: "🍕",
-                text: "Book dinner & movie tickets together",
-                origin: "https://www.kayak.com",
-              },
-              {
-                icon: "✈️",
-                text: "Plan and price my trip in one shot",
-                origin: "https://www.kayak.com",
-              },
-              {
-                icon: "📋",
-                text: "Auto-fill council forms & applications",
-                origin: "https://www.gov.uk",
-              },
-            ].map((chip) => (
+            {TASK_CHIPS.map((chip) => (
               <button
                 key={chip.text}
                 type="button"
@@ -121,7 +101,7 @@ export function Home() {
                     const res = await fetch("/sessions", {
                       method: "POST",
                       headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ origin: chip.origin }),
+                      body: JSON.stringify({}),
                     });
                     if (!res.ok) {
                       setError("request failed");
@@ -134,7 +114,7 @@ export function Home() {
                       };
                     nav(`/c/${sessionToken}`, {
                       state: {
-                        origin: granted || chip.origin,
+                        origin: granted || undefined,
                         initialPrompt: chip.text,
                       },
                     });
