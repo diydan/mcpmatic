@@ -64,7 +64,13 @@ export default {
         return json({ ok: false, error: "origin must be https" }, 400);
       }
       const stub = env.SESSION.getByName(consentMatch[1]);
-      const granted = await withExpiry(() => stub.grantConsent(origin));
+      // "user": this route is reached only by explicit human action (the
+      // address-bar submit and the Consent widget's Grant button in
+      // src/pages/Session.tsx) — never by a model-driven path, which goes
+      // through allowOrigin instead. source is what decides whether the
+      // grant is written through to the durable account, so it must be
+      // explicit here rather than riding the default.
+      const granted = await withExpiry(() => stub.grantConsent(origin, "user"));
       if (granted instanceof Response) return granted;
       return json({ ok: true, origin });
     }
