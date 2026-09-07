@@ -31,7 +31,11 @@ import { displayHosts, unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
 import { navigationHref, normaliseOrigin } from "../../shared/origin";
-import { recordRecentSite } from "../lib/recent-sites";
+import { getRecentSites, recordRecentSite } from "../lib/recent-sites";
+import {
+  RENDER_FALLBACK_MS,
+  renderFallbackDecision,
+} from "../lib/render-fallback";
 
 const MANIFESTS = allManifests();
 const ORIGINS = STORES.map((s) => ({
@@ -82,6 +86,8 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
   const seededFromNav = originFromNavState(navState);
   const initialPromptFromNav = promptFromNavState(navState);
   const initialPromptSent = useRef(false);
+  const framesSeen = useRef(0);
+  const fallbackFired = useRef(false);
   const [viewMode, setViewMode] = useState<"normal" | "tech">("normal");
   const [tools, setTools] = useState<ToolSchema[]>([]);
   const [lines, setLines] = useState<Line[]>([
@@ -288,6 +294,37 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           inputSchema,
         })),
       });
+      // Spec §6 backstop. The agent's first call should be a navigation; if
+      // nothing has rendered by now, put the user's last site on screen rather
+      // than leaving them on a standby message.
+      window.setTimeout(() => {
+        const decision = renderFallbackDecision({
+          framesSeen: framesSeen.current,
+          fallbackFired: fallbackFired.current,
+          recent: getRecentSites(),
+        });
+        if (decision.kind !== "navigate") return;
+        fallbackFired.current = true;
+        setLines((l) => [
+          ...l,
+          {
+            kind: "system",
+            // Deliberately not the "Connected to ..." wording: this origin is
+            // not part of the task, and saying so is the whole point.
+            text: `nothing opened yet — showing your last site, ${displayHosts([decision.origin]).join("")}`,
+          },
+        ]);
+        void (async () => {
+          try {
+            const mc = ensureModelContext();
+            const listed = await mc.getTools();
+            const nav = listed.find((t) => t.name === "navigate_to");
+            if (nav) await mc.executeTool(nav, { origin: decision.origin });
+          } catch {
+            /* browser binding missing; the standby message stands */
+          }
+        })();
+      }, RENDER_FALLBACK_MS);
     };
 
     const bridge = openBridge(
@@ -308,7 +345,10 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           ]);
         },
         onMessage: (msg: ServerMessage) => {
-          if (msg.type === "frame") setJpeg(msg.jpeg);
+          if (msg.type === "frame") {
+            framesSeen.current += 1;
+            setJpeg(msg.jpeg);
+          }
           if (msg.type === "origin_granted") {
             setConsented((prev) => {
               if (prev.has(msg.origin)) return prev;
