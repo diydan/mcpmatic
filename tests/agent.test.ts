@@ -204,6 +204,27 @@ describe("SYSTEM prompt", () => {
     expect(system).toContain("get_page_state");
   });
 
+  it("does not tell the model to hide the approval gate", () => {
+    // "Never tell the user you proposed a tool" was meant as "do not claim
+    // credit for something that did not happen". As written it instructed
+    // silence about the manifest-approval gate — the branch's whole safety
+    // story — on the branch that lets the agent roam onto sites the user
+    // never named.
+    expect(system).not.toContain("Never tell the user you proposed a tool");
+    expect(system).not.toMatch(/(never|don't|do not)\s+(tell|mention|say)[^.]*approv/i);
+  });
+
+  it("still forbids claiming credit for a tool it did not call", () => {
+    expect(system).toContain(
+      "Never claim you proposed or created a tool; report the tool you actually called and what it returned.",
+    );
+  });
+
+  it("says the approval gate may be described to the user", () => {
+    expect(system).toContain("A human approves each generated tool by name before any of them can run");
+    expect(system).toMatch(/not something to hide/i);
+  });
+
   it("names list_remote_tools as the trigger for tool synthesis, not inspect_site", () => {
     expect(system).toContain("Call list_remote_tools to find out whether the site publishes WebMCP tools of its own — on a site that publishes none, that call is what starts synthesising draft tools for it.");
     expect(system).not.toContain("Call inspect_site to see what it exposes, then propose a manifest");
