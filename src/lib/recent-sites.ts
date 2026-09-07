@@ -19,7 +19,14 @@ function getDomainBase(hostname: string): string {
   return parts[0];
 }
 
-export function getRecentSites(): RecentSite[] {
+/**
+ * Only genuine stored history — never the canned `STORES` list `getRecentSites`
+ * falls back to for a first-time visitor. Returns `[]` when there is none, so
+ * a caller that must not guess a destination (the render fallback in
+ * `Session.tsx`) can tell "the user has an actual last site" apart from
+ * "nobody has visited anything yet".
+ */
+export function getStoredRecentSites(): RecentSite[] {
   try {
     const raw = localStorage.getItem(RECENT_SITES_KEY);
     if (raw) {
@@ -39,6 +46,13 @@ export function getRecentSites(): RecentSite[] {
   } catch {
     /* ignore storage errors */
   }
+
+  return [];
+}
+
+export function getRecentSites(): RecentSite[] {
+  const stored = getStoredRecentSites();
+  if (stored.length > 0) return stored;
 
   return STORES.map((s, idx) => ({
     origin: s.origin,

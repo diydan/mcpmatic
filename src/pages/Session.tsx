@@ -31,7 +31,7 @@ import { displayHosts, unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { allManifests, STORES } from "../../shared/stores";
 import { navigationHref, normaliseOrigin } from "../../shared/origin";
-import { getRecentSites, recordRecentSite } from "../lib/recent-sites";
+import { getStoredRecentSites, recordRecentSite } from "../lib/recent-sites";
 import {
   RENDER_FALLBACK_MS,
   renderFallbackDecision,
@@ -275,6 +275,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
 
     let bridgeOpen = false;
     let initialSyncDone = false;
+    let fallbackTimer: ReturnType<typeof window.setTimeout> | null = null;
 
     const maybeDispatchInitialPrompt = async () => {
       if (!initialPromptFromNav || initialPromptSent.current) return;
@@ -297,11 +298,11 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
       // Spec §6 backstop. The agent's first call should be a navigation; if
       // nothing has rendered by now, put the user's last site on screen rather
       // than leaving them on a standby message.
-      window.setTimeout(() => {
+      fallbackTimer = window.setTimeout(() => {
         const decision = renderFallbackDecision({
           framesSeen: framesSeen.current,
           fallbackFired: fallbackFired.current,
-          recent: getRecentSites(),
+          recent: getStoredRecentSites(),
         });
         if (decision.kind !== "navigate") return;
         fallbackFired.current = true;
@@ -481,6 +482,7 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       mc.removeEventListener("toolchange", onChange);
+      if (fallbackTimer !== null) clearTimeout(fallbackTimer);
       registration.abort();
       registrationRef.current = null;
       bridge.close();
