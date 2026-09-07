@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decide,
+  initialMessages,
   modelPath,
   runTurn,
   type ChatTurn,
@@ -172,5 +173,34 @@ describe("runTurn via a direct key", () => {
 
   it("refuses when nothing is configured", async () => {
     await expect(runTurn({}, MESSAGES, TOOLS)).rejects.toThrow(/ai. binding/);
+  });
+});
+
+describe("SYSTEM prompt", () => {
+  const system = String(initialMessages("plan a trip")[0].content);
+
+  it("licenses navigation to any https site", () => {
+    // Spec §2: with no origin granted the model sees only the spine and
+    // previously had no licence to pick a destination.
+    expect(system).toMatch(/any https site/i);
+  });
+
+  it("requires the first tool call to be a navigation", () => {
+    // Spec §6: this is the primary mechanism for "a page always renders".
+    expect(system).toMatch(/first tool call/i);
+    expect(system).toContain("navigate_to");
+  });
+
+  it("presents pre-wired origins as examples, not as the available world", () => {
+    expect(system).toMatch(/not the list of sites you may visit/i);
+  });
+
+  it("still forbids inventing tools", () => {
+    // Load-bearing for the approval story; must survive the rewrite.
+    expect(system).toContain("Never invent tools");
+  });
+
+  it("still tells the model it cannot see the page", () => {
+    expect(system).toContain("get_page_state");
   });
 });

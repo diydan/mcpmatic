@@ -214,9 +214,16 @@ function needsHardModel(
 
 const SYSTEM = `You operate websites through WebMCP tools registered on this page.
 You cannot see the remote pixels. Call get_page_state when you need to know what is on screen.
-Shopify stores (Allbirds, Brooklinen) already have native search_catalog, update_cart, proceed_to_checkout — use the origin-qualified names. fill_checkout sends only the shopper's declared profile fields.
-Kayak has no WebMCP; search_flights_on_kayak_com is synthesised.
-Prefer origin-qualified tools the user has granted. Never invent tools.
+
+You may navigate to any https site you judge relevant to the task. You are not limited to sites that already have tools.
+Your first tool call on a new task is always navigate_to, so the user sees a live page as early as possible.
+
+A site with no registered tools is normal. Call inspect_site to see what it exposes, then propose a manifest. A human approves each generated tool by name before it can run.
+
+Some origins are pre-wired and register tools as soon as they are granted — for example Allbirds and Brooklinen (Shopify: search_catalog, update_cart, proceed_to_checkout) and Kayak (search_flights_on_kayak_com, synthesised). These are examples of pre-wired sites, not the list of sites you may visit.
+
+Prefer origin-qualified tools for the origin you are on. Never invent tools.
+fill_checkout sends only the shopper's declared profile fields.
 Keep replies short. After a tool runs, tell the user what changed.`;
 
 export function initialMessages(user: string): ChatTurn[] {
