@@ -196,3 +196,21 @@ describe("responsesBody — a tool call round trip", () => {
     expect(spoken.input).toContainEqual({ role: "assistant", content: "on it" });
   });
 });
+
+describe("responsesBody output budget", () => {
+  // Manifest generation asks for a JSON array of tools, each with a name,
+  // description, inputSchema and steps. At 1024 the reply was cut off
+  // mid-object and surfaced as "not valid JSON" — the model had done its job
+  // and the budget threw the answer away. Observed on news.ycombinator.com:
+  // the excerpt ends inside the first tool's first step.
+  //
+  // It is a ceiling, not a target, so a short chat reply costs no more for
+  // it being higher.
+  it("leaves room for a generated manifest", () => {
+    const body = responsesBody(
+      [{ role: "user", content: "propose tools" }],
+      [],
+    ) as { max_output_tokens: number };
+    expect(body.max_output_tokens).toBeGreaterThanOrEqual(4096);
+  });
+});

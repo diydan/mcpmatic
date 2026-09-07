@@ -141,7 +141,14 @@ export function responsesBody(
   return {
     instructions,
     input,
-    max_output_tokens: 1024,
+    // A ceiling, not a target: a short chat reply costs nothing extra for it
+    // being high. At 1024 it was low enough to truncate a generated manifest
+    // mid-object — a JSON array of tools, each with a name, description,
+    // inputSchema and steps, does not fit. The model was doing its job and
+    // the budget threw the answer away, reported as "not valid JSON".
+    // Observed on news.ycombinator.com, cut off inside the first tool's
+    // first step.
+    max_output_tokens: 8192,
     // Omitted entirely when empty rather than sent as `tools: []`.
     // OpenAI-compatible endpoints have historically rejected an empty array
     // with `Invalid 'tools': empty array`, and manifest generation is the
