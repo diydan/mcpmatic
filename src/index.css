@@ -278,8 +278,13 @@ input {
   display: grid;
   grid-template-columns: minmax(280px, 34%) 1fr;
   grid-template-rows: auto 1fr;
-  height: 100%;
-  min-height: 100dvh;
+  /* Exactly the viewport, not "at least". With min-height the grid grew
+     whenever the right column's content did, the chat column stretched with
+     it, and the composer went below the fold — so sending a follow-up meant
+     scrolling down to find the input on every turn. Bounded here, each column
+     scrolls inside itself and the form stays put. */
+  height: 100dvh;
+  overflow: hidden;
 }
 .shell__top {
   grid-column: 1 / -1;
@@ -295,6 +300,10 @@ input {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* Its own scrollbar: the viewport, consent panel and actions list together
+     are taller than the screen, and that overflow must not become the page's. */
+  min-height: 0;
+  overflow: auto;
   border-left: 1px solid var(--line);
 }
 
@@ -303,6 +312,9 @@ input {
   flex-direction: column;
   background: var(--panel);
   min-width: 0;
+  /* A flex child will not shrink below its content without this, so the log
+     could not scroll and the overflow landed on the page instead. */
+  min-height: 0;
 }
 .chat__tools {
   list-style: none;
