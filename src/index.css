@@ -511,7 +511,25 @@ input {
   gap: 0.5rem;
 }
 
-.viewport { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.viewport {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The stage carries the height, and the height is the reader's to choose.
+   `flex: 1` alone collapsed to content once .shell__right became a scroll
+   container — there is no free space to distribute in a scrolling column —
+   which squashed the remote page into a thin band. An explicit height fixes
+   that, and `resize: vertical` hands the drag handle to the user: some tasks
+   want a tall page, some want the panels below it. `overflow: hidden` is
+   what makes a browser honour `resize`. */
+.viewport__stage {
+  height: 60vh;
+  min-height: 200px;
+  resize: vertical;
+  overflow: hidden;
+}
 .viewport__bar {
   display: flex;
   align-items: center;
@@ -649,4 +667,19 @@ input {
 .passkey__status {
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+/* Which world this page is in: a site that registered WebMCP is being asked,
+   a site without it is being driven through synthesised, human-approved
+   tools. The panel showed the difference only by whether a tool list or a
+   line of prose appeared. */
+.surface__mcp {
+  margin-left: 0.5rem;
+  vertical-align: middle;
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.surface__mcp--native {
+  border-color: var(--primary);
+  color: var(--primary);
 }

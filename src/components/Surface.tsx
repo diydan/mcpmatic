@@ -1,5 +1,6 @@
 import type { DiscoveredTool, ToolSchema } from "../../shared/protocol";
 import { offersFor } from "../lib/offers";
+import { mcpBadge } from "../lib/mcp-badge";
 
 type Props = {
   origin: string | null;
@@ -20,6 +21,7 @@ export function Surface({
 }: Props) {
   const offers = offersFor({ registered, origin });
   const host = origin ? origin.replace(/^https:\/\//, "") : null;
+  const badge = mcpBadge({ origin, remoteToolCount: remoteTools.length });
 
   return (
     <section className="surface" aria-label="Available page actions">
@@ -28,7 +30,16 @@ export function Surface({
         Actions the AI can perform directly on this website.
       </p>
       {host ? (
-        <p className="muted">{host}</p>
+        <p className="muted">
+          {host}
+          {badge ? (
+            <span
+              className={`badge surface__mcp${badge.native ? " surface__mcp--native" : ""}`}
+            >
+              {badge.label}
+            </span>
+          ) : null}
+        </p>
       ) : (
         <p className="muted">Select or open a website to view available actions.</p>
       )}

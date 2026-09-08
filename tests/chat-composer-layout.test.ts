@@ -54,3 +54,18 @@ describe("the chat composer stays on screen", () => {
     expect(right).toMatch(/overflow/);
   });
 });
+
+describe("the browser preview is the reader's to size", () => {
+  it("gives the stage a height the user can drag", () => {
+    // `flex: 1` alone left it at content height inside a scrolling column.
+    const stage = rule(".viewport__stage");
+    expect(stage).toMatch(/height:\s*60vh/);
+    expect(stage).toMatch(/resize:\s*vertical/);
+    // A browser ignores `resize` unless overflow is something other than visible.
+    expect(stage).toMatch(/overflow:\s*hidden/);
+  });
+
+  it("stops the drag before the preview becomes useless", () => {
+    expect(rule(".viewport__stage")).toMatch(/min-height:\s*\d/);
+  });
+});

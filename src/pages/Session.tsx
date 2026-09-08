@@ -785,6 +785,14 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             });
           }}
         />
+        {/* Normal view is the product: an address bar, the page, and the
+            conversation. Consent, passkeys and the tool surface are all
+            answers to "how does this work", which is what Tech view is for.
+            Trade-off worth knowing: revoke lives in Consent, so revoking a
+            site means switching to Tech view. Every grant is still announced
+            in the transcript either way. */}
+        {viewMode === "tech" ? (
+          <>
         <Consent
           origins={ORIGINS}
           consented={consented}
@@ -873,6 +881,8 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
               : undefined
           }
         />
+          </>
+        ) : null}
       </div>
       <ApprovalDialog
         request={approval}
