@@ -354,6 +354,15 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
             setJpeg(msg.jpeg);
           }
           if (msg.type === "origin_granted") {
+            // "Last webpages automated" recorded only what the user typed.
+            // Once the chips stopped carrying an origin, every site actually
+            // automated was reached through navigate_to, which never touches
+            // localStorage — so the panel listed the one thing it was not
+            // about. This is the message that fires for every origin the
+            // agent opens, so it is where the history belongs. The render
+            // fallback deliberately emits no origin_granted, so a page shown
+            // as a fallback does not enter the history as something automated.
+            recordRecentSite(msg.origin);
             setConsented((prev) => {
               if (prev.has(msg.origin)) return prev;
               const next = new Set(prev);

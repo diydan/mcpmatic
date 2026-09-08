@@ -119,3 +119,47 @@ describe("getRecentSites (unchanged behaviour)", () => {
     expect(sites[0].origin).toBe("https://www.gov.uk");
   });
 });
+
+describe("sites the agent opened on its own", () => {
+  // "Last webpages automated" recorded only what the user typed. Once the
+  // chips stopped carrying an origin, every site actually automated —
+  // allbirds, rei, zappos, gov.uk, fandango, all chosen by the agent — was
+  // reached through navigate_to, which never touches localStorage. The panel
+  // was left listing the one thing it was not about.
+  //
+  // The new call site passes an origin and nothing else, so these pin what
+  // recordRecentSite makes of a bare off-catalog origin.
+  beforeEach(() => localStorage.clear());
+
+  it("records an off-catalog origin under its hostname", () => {
+    recordRecentSite("https://www.zappos.com");
+    const [site] = getStoredRecentSites();
+    expect(site.origin).toBe("https://www.zappos.com");
+    expect(site.label).toBe("zappos.com");
+    expect(site.blurb).toContain("zappos.com");
+  });
+
+  it("keeps the most recently opened site first", () => {
+    recordRecentSite("https://www.rei.com");
+    recordRecentSite("https://www.zappos.com");
+    expect(getStoredRecentSites().map((s) => s.label)).toEqual([
+      "zappos.com",
+      "rei.com",
+    ]);
+  });
+
+  it("does not list the same site twice when the agent returns to it", () => {
+    recordRecentSite("https://www.rei.com");
+    recordRecentSite("https://www.zappos.com");
+    recordRecentSite("https://www.rei.com");
+    const labels = getStoredRecentSites().map((s) => s.label);
+    expect(labels).toEqual(["rei.com", "zappos.com"]);
+  });
+
+  it("still recognises a catalog site the agent chose by itself", () => {
+    // Reached via navigate_to rather than a click, so no label is passed —
+    // it must still come back as Allbirds, not "allbirds.com".
+    recordRecentSite("https://www.allbirds.com");
+    expect(getStoredRecentSites()[0].label).toBe("Allbirds");
+  });
+});
