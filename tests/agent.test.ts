@@ -299,3 +299,30 @@ describe("a model that the account cannot call", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("SYSTEM prompt — where the model may not go", () => {
+  const system = String(initialMessages("find the best deal")[0].content);
+
+  // Observed on the live shopping chip: told to find the best deal and given
+  // no search tool, the model opened google.com and was served a reCAPTCHA —
+  // "Our systems have detected unusual traffic from your computer network",
+  // against Browser Rendering's datacentre IP. The task dead-ends there, and
+  // a bot check is not something the agent may work around. Until web_search
+  // exists (spec §4), the prompt has to steer it to sites directly.
+  it("warns the model off search engines", () => {
+    expect(system).toMatch(/search engine/i);
+  });
+
+  it("says why, so the model does not simply try another one", () => {
+    expect(system).toMatch(/block/i);
+  });
+
+  it("tells it what to do instead", () => {
+    expect(system).toMatch(/go directly/i);
+  });
+
+  it("does not turn that into a blanket ban on navigation", () => {
+    // The open-web licence is the whole feature; this narrows one path only.
+    expect(system).toContain("You may navigate to any https site you judge relevant to the task.");
+  });
+});
