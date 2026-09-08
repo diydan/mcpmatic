@@ -30,6 +30,7 @@ import { PasskeyBar } from "../components/PasskeyBar";
 import { displayHosts, unionOrigins } from "../../shared/origin";
 import { ensureModelContext } from "../lib/webmcp-polyfill";
 import { runToolCall } from "../lib/tool-call-turn";
+import { endsTurn } from "../lib/turn-state";
 import { allManifests, STORES } from "../../shared/stores";
 import { navigationHref, normaliseOrigin } from "../../shared/origin";
 import { getStoredRecentSites, recordRecentSite } from "../lib/recent-sites";
@@ -343,6 +344,11 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           ]);
         },
         onMessage: (msg: ServerMessage) => {
+          // One place decides when the composer is free again. It used to be
+          // decided twice — on `error` and on the bridge closing — and not at
+          // all for a turn that simply succeeded, so the input locked as soon
+          // as the agent answered and stayed locked for the session.
+          if (endsTurn(msg.type)) setBusy(false);
           if (msg.type === "frame") {
             framesSeen.current += 1;
             setJpeg(msg.jpeg);
@@ -446,7 +452,8 @@ export function Session({ role = "facade" }: { role?: SessionRole }) {
           }
           if (msg.type === "error") {
             setLines((l) => [...l, { kind: "system", text: msg.message }]);
-            setBusy(false);
+            // busy is cleared by endsTurn above; the map-site spinner is its
+            // own thing and still needs releasing here.
             setMapSiteBusy(false);
           }
           if (msg.type === "manifest_draft") {
